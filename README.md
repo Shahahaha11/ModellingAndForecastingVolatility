@@ -21,10 +21,13 @@ THESIS/
 │   ├── mfivDaily.py
 │   ├── msGarch.py
 
-FILES IN "models" SUB FOLDER :
+FILES IN "src" SUB FOLDER :
+The model uses helper functions defined in files inside src.
 
+FILES IN "models" SUB FOLDER :
+- DataPrep : Contains sample data preparation. (Replaced by class src.dataPrep)
+- ComputeIV : Contains sample IV computations. (Replaced by class src.interpol)
 - Model_T : The main model which uses IV measures forecasted at time t using options expiring in 5 hours from now. 
-- data : This file is empty due to limited github payload. 
 
 Note : Two other folders "outputs" and "data" can be found on the shared drive. 
 Place the two sub-folders in the parent folder where THESIS is located for optimal notebook run.
