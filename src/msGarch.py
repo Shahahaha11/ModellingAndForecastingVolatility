@@ -1,6 +1,10 @@
 import numpy as np
 import numpy as np
 
+# This file contains 3 classes :
+# class lnMsGARCHIV:
+# class msGARCHIV:
+# class msGARCH:
 
 class lnMsGARCHIV:
     """
@@ -438,10 +442,7 @@ import numpy as np
 class msGARCH:
     """
     Wrapper class for your plain Markov-switching / MS-GARCH functions.
-
-    IMPORTANT:
-    - The actual function bodies are unchanged.
-    - Everything is accessible via this class (attributes + methods).
+    
     """
 
     def __init__(self):

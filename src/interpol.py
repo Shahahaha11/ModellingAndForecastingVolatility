@@ -3,7 +3,11 @@ import pandas as pd
 from scipy.interpolate import CubicSpline
 from tqdm import tqdm
 from math import erf, sqrt, log, exp
-
+# This pipeline does the following :
+# Takes option data (strikes, maturities, call/put prices) and BTC market data (spot, rate, forward).
+# Builds filled call and put price surfaces across strikes for each hour and maturity.
+# Computes hourly model-free implied variance and ATM Black-Scholes implied volatility for each horizon H.
+# Outputs filled call surface (df11), filled put surface (df12), and MFIV/BSIV time series (MFIV_byH).
 
 class MFIVPipeline:
     """
@@ -53,7 +57,7 @@ class MFIVPipeline:
 
         return pd.DataFrame({"strike": K_grid, "price": p_grid}).dropna(subset=["price"])
 
-    def build_surfaces(self):
+    def build_surfaces(self): # uses spline fill prices
         # assumes df has: type, strike, maturity, option_price, and datetime index
         df0 = self.df.copy()
         df0.index = pd.to_datetime(df0.index)
@@ -163,7 +167,7 @@ class MFIVPipeline:
         var = (2.0 * np.exp(r * T_years) / T_years) * integral
         return var if np.isfinite(var) and var > 0 else np.nan
 
-    def compute_mfiv_byH(self, H_LIST):
+    def compute_mfiv_byH(self, H_LIST): # Needs df1 and df2 from build_surfaces()
         if self.df11 is None or self.df12 is None:
             raise ValueError("Run build_surfaces() first (needs df11/df12).")
 
@@ -199,10 +203,10 @@ class MFIVPipeline:
                 C = g["price_C"].to_numpy(float)
                 P = g["price_P"].to_numpy(float)
 
+                # Q is filled with OTM calls and OTM puts only. (already interpolated)
                 Q = np.full_like(K, np.nan)
                 Q[K < F] = P[K < F]
                 Q[K > F] = C[K > F]
-
                 # coverage filter  <-- same
                 m = K / F
                 if m.min() > 0.85 or m.max() < 1.15:
