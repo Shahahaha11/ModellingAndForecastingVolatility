@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from scipy.interpolate import CubicSpline
+from scipy.interpolate import PchipInterpolator
 from tqdm import tqdm
 from math import erf, sqrt, log, exp
 # LAST CHANGE : df0["hour"] = df0.index.floor("h") + pd.Timedelta(hours=1) –– 
@@ -34,7 +34,7 @@ class MFIVPipeline:
     # Cell 1 helpers
     # =========================
     @staticmethod
-    def spline_fill_prices(g: pd.DataFrame) -> pd.DataFrame:
+    def spline_fill_prices(g: pd.DataFrame, K_grid: np.ndarray) -> pd.DataFrame:
         g = g.sort_values("strike")
         x = g["strike"].to_numpy(float)
         y = g["option_price"].to_numpy(float)
@@ -47,17 +47,11 @@ class MFIVPipeline:
         if x_u.size < 4:
             return pd.DataFrame()
 
-        step = np.min(np.diff(x_u))
-        if not np.isfinite(step) or step <= 0:
-            return pd.DataFrame()
-
-        K_grid = np.arange(x_u.min(), x_u.max() + step, step)
-
-        cs = CubicSpline(x_u, y_u, bc_type="natural", extrapolate=False)
+        cs = PchipInterpolator(x_u, y_u, extrapolate=False)
         p_grid = cs(K_grid)
 
         return pd.DataFrame({"strike": K_grid, "price": p_grid}).dropna(subset=["price"])
-
+    
     def build_surfaces(self): # uses spline fill prices
         # assumes df has: type, strike, maturity, option_price, and datetime index
         df0 = self.df.copy()
@@ -69,33 +63,36 @@ class MFIVPipeline:
         df0["cp"] = pd.Series(pd.NA, index=df0.index, dtype="string")
         df0.loc[t.isin(["c"]) | t.str.contains("call", na=False), "cp"] = "C"
         df0.loc[t.isin(["p"]) | t.str.contains("put",  na=False), "cp"] = "P"
+        
+        # ----- df11/df12: call+put price surfaces (filled across a SHARED strike grid) -----
+        rowsC, rowsP = [], []
+        for (hour, maturity), g_all in tqdm(df0.groupby(["hour", "maturity"])):
+            x_u_all = np.unique(g_all["strike"].to_numpy(float))
+            if x_u_all.size < 4:
+                continue
+            step = np.min(np.diff(x_u_all))
+            if not np.isfinite(step) or step <= 0:
+                continue
+            K_grid = np.arange(x_u_all.min(), x_u_all.max() + step, step)
 
-        # ----- df11: call price surface (filled across strikes) -----
-        rowsC = []
-        for (hour, maturity), g in tqdm(df0[df0["cp"] == "C"].groupby(["hour", "maturity"])):
-            out = self.spline_fill_prices(g)
-            if not out.empty:
-                out.insert(0, "maturity", maturity)
-                out.insert(0, "hour", hour)
-                rowsC.append(out)
+            outC = self.spline_fill_prices(g_all[g_all["cp"] == "C"], K_grid)
+            if not outC.empty:
+                outC.insert(0, "maturity", maturity)
+                outC.insert(0, "hour", hour)
+                rowsC.append(outC)
+
+            outP = self.spline_fill_prices(g_all[g_all["cp"] == "P"], K_grid)
+            if not outP.empty:
+                outP.insert(0, "maturity", maturity)
+                outP.insert(0, "hour", hour)
+                rowsP.append(outP)
 
         df11 = pd.concat(rowsC, ignore_index=True) if rowsC else pd.DataFrame(
             columns=["hour", "maturity", "strike", "price"]
         )
-
-        # ----- df12: put price surface (filled across strikes) -----
-        rowsP = []
-        for (hour, maturity), g in tqdm(df0[df0["cp"] == "P"].groupby(["hour", "maturity"])):
-            out = self.spline_fill_prices(g)
-            if not out.empty:
-                out.insert(0, "maturity", maturity)
-                out.insert(0, "hour", hour)
-                rowsP.append(out)
-
         df12 = pd.concat(rowsP, ignore_index=True) if rowsP else pd.DataFrame(
             columns=["hour", "maturity", "strike", "price"]
         )
-
         self.df11, self.df12 = df11, df12
         return df11, df12
 
@@ -139,8 +136,7 @@ class MFIVPipeline:
         return 0.5 * (lo + hi)
 
     @staticmethod
-    def mfiv_var_from_Q(K, Q, r, T_years, F,
-                        m_low=0.7, m_high=1.3, n_tail=200):
+    def mfiv_var_from_Q(K, Q, r, T_years, F, m_low=0.7, m_high=1.3, n_tail=200):
         K = np.asarray(K, float)
         Q = np.asarray(Q, float)
 
@@ -160,7 +156,7 @@ class MFIVPipeline:
         right_tail = np.logspace(np.log10(K[-1]), np.log10(K_hi), n_tail) if K_hi > K[-1] else []
 
         K_ext = np.unique(np.concatenate([left_tail, K, right_tail]))
-        Q_ext = np.interp(K_ext, K, Q, left=Q[0], right=Q[-1])
+        Q_ext = np.interp(K_ext, K, Q, left=0.0, right=0.0)
 
         integrand = Q_ext / (K_ext ** 2)
         integral = np.trapezoid(integrand, K_ext)
@@ -175,9 +171,7 @@ class MFIVPipeline:
         MFIV_byH = {}
 
         for H in H_LIST:
-            T_years = H / (24.0 * 365.0)
             rows = []
-
             # combine calls + puts (NO maturity interpolation)  
             CP = pd.merge(
                 self.df11, self.df12,
@@ -195,11 +189,13 @@ class MFIVPipeline:
 
                 S = float(self.d_btc.loc[hour, "Close"])
                 r = float(self.d_btc.loc[hour, "rfr"])
-                F = float(self.d_btc.loc[hour, f"F{H}"])
-
-                # nearest maturity to H
-                g = g.loc[(g["T_hours"] - H).abs().groupby(g["strike"]).idxmin()]
-
+                g = g.loc[g["T_hours"] > 0]
+                if g.empty:
+                    continue
+                nearest_maturity = g.loc[(g["T_hours"] - H).abs().idxmin(), "maturity"]
+                g = g.loc[g["maturity"] == nearest_maturity]
+                T_years = float(g["T_hours"].iloc[0]) / (24.0 * 365.0)
+                F = S * np.exp((r - self.q) * T_years)
                 K = g["strike"].to_numpy(float)
                 C = g["price_C"].to_numpy(float)
                 P = g["price_P"].to_numpy(float)
@@ -222,12 +218,22 @@ class MFIVPipeline:
                 px = C[atm_i] if K[atm_i] >= F else P[atm_i]
                 is_call = K[atm_i] >= F
 
-                bsIV = self.bs_implied_vol_bisect(is_call, S, K[atm_i], T_years, r, self.q, px)
-                if not np.isfinite(bsIV):
-                    continue
+                # lower = max(0.0, (S - K[atm_i]) if is_call else (K[atm_i] - S))
+                # upper = S if is_call else K[atm_i]
+                # if not (lower <= px <= upper):
+                #     continue
 
+                # bsIV = self.bs_implied_vol_bisect(is_call, S, K[atm_i], T_years, r, self.q, px)
+                # if not np.isfinite(bsIV):
+                #     continue
+                # rows.append((hour, bsIV, mfiv_var))
+                lower = max(0.0, (S - K[atm_i]) if is_call else (K[atm_i] - S))
+                upper = S if is_call else K[atm_i]
+                bsIV = np.nan
+                if lower <= px <= upper:
+                    bsIV = self.bs_implied_vol_bisect(is_call, S, K[atm_i], T_years, r, self.q, px)
                 rows.append((hour, bsIV, mfiv_var))
-
+                
             df_out = pd.DataFrame(rows, columns=["hour", "bsIV", "MFIV"]).set_index("hour").sort_index()
             MFIV_byH[H] = df_out
 
