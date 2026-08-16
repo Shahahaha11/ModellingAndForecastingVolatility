@@ -373,7 +373,7 @@ print(pd.Series([x["action"] for x in market.transactions]).value_counts())
 # ============================================= PLOT EQUITY  ========================================================
 # ==================================================================================================================
 import matplotlib.pyplot as plt
-PLOT_YEAR = 2019
+PLOT_YEAR = 2020
 plt.figure(figsize=(12, 6))
 for MODEL in MODELS:
     plot_key = f"{MODEL}_{str(PLOT_YEAR)[2:]}"
@@ -409,63 +409,63 @@ for x in greek_tests[M:N]:
 # ==================================================================================================================
 # ============================================= PLOTLY SPOT PLOT  ==================================================
 # ==================================================================================================================
-import pandas as pd
-import plotly.graph_objects as go
+# import pandas as pd
+# import plotly.graph_objects as go
 
-y = 2021
-price_df = d_btc_raw_by_year[y].copy()
-price_df = price_df.loc[~price_df.index.duplicated(keep="first")].sort_index()
-spot = pd.to_numeric(price_df["close"], errors="coerce")
-for MODEL in MODELS:
-    snapshots = strategy_results[f"{MODEL}_{str(y)[2:]}"]["snapshots"]
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=spot.index, y=spot, mode="lines", name="Spot"))
+# y = 2021
+# price_df = d_btc_raw_by_year[y].copy()
+# price_df = price_df.loc[~price_df.index.duplicated(keep="first")].sort_index()
+# spot = pd.to_numeric(price_df["close"], errors="coerce")
+# for MODEL in MODELS:
+#     snapshots = strategy_results[f"{MODEL}_{str(y)[2:]}"]["snapshots"]
+#     fig = go.Figure()
+#     fig.add_trace(go.Scatter(x=spot.index, y=spot, mode="lines", name="Spot"))
 
-    previous_open = False
-    entry_time = None
-    entry_positions = []
+#     previous_open = False
+#     entry_time = None
+#     entry_positions = []
 
-    for snap in snapshots:
-        now = pd.Timestamp(snap["time"]).floor("h")
-        positions = snap.get("positions", [])
-        currently_open = bool(positions)
+#     for snap in snapshots:
+#         now = pd.Timestamp(snap["time"]).floor("h")
+#         positions = snap.get("positions", [])
+#         currently_open = bool(positions)
 
-        if currently_open and not previous_open:
-            entry_time = now
-            entry_positions = positions.copy()
+#         if currently_open and not previous_open:
+#             entry_time = now
+#             entry_positions = positions.copy()
 
-        if not currently_open and previous_open:
-            exit_time = now
+#         if not currently_open and previous_open:
+#             exit_time = now
 
-            for position in entry_positions:
-                strike = position["strike"]
+#             for position in entry_positions:
+#                 strike = position["strike"]
 
-                fig.add_trace(go.Scatter(
-                    x=[entry_time], y=[strike],
-                    mode="markers",
-                    marker={"size": 6},
-                    showlegend=False
-                ))
+#                 fig.add_trace(go.Scatter(
+#                     x=[entry_time], y=[strike],
+#                     mode="markers",
+#                     marker={"size": 6},
+#                     showlegend=False
+#                 ))
 
-                fig.add_trace(go.Scatter(
-                    x=[entry_time, exit_time],
-                    y=[strike, strike],
-                    mode="lines",
-                    line={"dash": "dot"},
-                    showlegend=False
-                ))
-            entry_time = None
-            entry_positions = []
-        previous_open = currently_open
+#                 fig.add_trace(go.Scatter(
+#                     x=[entry_time, exit_time],
+#                     y=[strike, strike],
+#                     mode="lines",
+#                     line={"dash": "dot"},
+#                     showlegend=False
+#                 ))
+#             entry_time = None
+#             entry_positions = []
+#         previous_open = currently_open
 
-    fig.update_layout(
-        title=f"{MODEL} — {y}",
-        xaxis_title="Time",
-        yaxis_title="Spot / Strike",
-        hovermode="closest"
-    )
-    fig.update_xaxes(rangeslider_visible=True)
-    fig.show()
+#     fig.update_layout(
+#         title=f"{MODEL} — {y}",
+#         xaxis_title="Time",
+#         yaxis_title="Spot / Strike",
+#         hovermode="closest"
+#     )
+#     fig.update_xaxes(rangeslider_visible=True)
+#     fig.show()
 
 # ====================================================== ROUGH ============================================================
 x = strategy_results["garch_n_mfiv_21"]["transactions"]
@@ -476,22 +476,16 @@ print(x[-1])
 # ====================================================== STRATEGY DIAGNOSTICS ============================================================
 # ========================================================================================================================================
 import pandas as pd
-
-y = 2021
+y = 2020
 the_model = "garch_n_mfiv"
 position_side = "short_strangle"
-
 tx = pd.DataFrame(strategy_results[f"{the_model}_{str(y)[2:]}"]["transactions"]).sort_values("time")
-
 open_actions = {"buy_to_open", "sell_to_open"}
 close_actions = {"buy_to_close", "sell_to_close", "liquidate", "expiry_settlement"}
-
 trades = []
 open_pos = {}
-
 for _, r in tx.iterrows():
     sym = r["symbol"]
-
     if r["action"] in open_actions:
         open_pos[sym] = {
             "entry_time": r["time"],
@@ -499,20 +493,16 @@ for _, r in tx.iterrows():
             "direction": r["held_direction"],
             "pnl": float(r["cash_change"])
         }
-
     elif r["action"] in close_actions and sym in open_pos:
         open_pos[sym]["pnl"] += float(r["cash_change"])
         open_pos[sym]["exit_time"] = r["time"]
         trades.append({"symbol": sym, **open_pos.pop(sym)})
-
 legs = pd.DataFrame(trades)
-
 groups = []
 for entry_time, g in legs.groupby("entry_time"):
     side = "short_strangle" if (g["direction"] == "sell").all() else "long_straddle"
     if side != position_side:
         continue
-
     call_pnl = g.loc[g["right"] == "C", "pnl"].sum()
     put_pnl = g.loc[g["right"] == "P", "pnl"].sum()
     groups.append({
@@ -526,11 +516,9 @@ for entry_time, g in legs.groupby("entry_time"):
         "put_result": "PROFIT" if put_pnl > 0 else "LOSS" if put_pnl < 0 else "FLAT",
         "position_result": "PROFIT" if call_pnl + put_pnl > 0 else "LOSS"
     })
-
 result = pd.DataFrame(groups)
 
 print(result.to_string(index=False))
-
 print("\nPositions:", len(result))
 print("Profitable positions:", (result["total_pnl"] > 0).sum())
 print("Losing positions:", (result["total_pnl"] < 0).sum())
