@@ -3,14 +3,37 @@
 import pandas as pd
 import numpy as np
 from srcB.helpers import *
+from scipy.stats import norm
 
-def testing_execute_trading_strategy( bt_year, bt_quarter, model, outputs_by_year, market, quantity=10, lookback_hours=60, mean_hours=60, hold_days=7, expiry_days=30, ql=0.1, qh=0.9, z=1.645):
-    out_full = outputs_by_year[bt_year][bt_quarter].copy()
-    out_full.index = pd.to_datetime(out_full.index,utc=True).floor("h")
+def testing_execute_trading_strategy(
+    bt_year, bt_quarter, model, outputs_by_year, market, trader_cache,
+    run_by="year",
+    quantity=10, lookback_hours=60, mean_hours=60,
+    hold_days=7, expiry_days=30, ql=0.1, qh=0.9, z=1.645
+    ):
 
+    if run_by == "year":
+        trade_full = pd.concat(
+            [outputs_by_year[bt_year][q] for q in ["q1", "q2", "q3", "q4"]]
+        ).sort_index()
+
+        out_full = trader_cache[bt_year].copy()
+
+    elif run_by == "quarter":
+        trade_full = outputs_by_year[bt_year][bt_quarter].copy()
+        out_full = trader_cache[(bt_year, bt_quarter)].copy()
+
+    else:
+        raise ValueError("run_by must be 'year' or 'quarter'")
+
+    trade_full.index = pd.to_datetime(trade_full.index, utc=True).floor("h")
+    trade_full = trade_full.loc[~trade_full.index.duplicated(keep="first")]
+
+    out_full.index = pd.to_datetime(out_full.index, utc=True).floor("h")
     out_full = out_full.loc[~out_full.index.duplicated(keep="first")]
 
-    now_list = out_full.index
+    now_list = trade_full.index
+
     snapshots = []
     greek_tests = []
 
@@ -94,7 +117,16 @@ def testing_execute_trading_strategy( bt_year, bt_quarter, model, outputs_by_yea
         rolling_forecast_mean = (garch_series.rolling(window=mean_hours, min_periods=mean_hours).mean())
         forecast_top10_series = (rolling_forecast_mean.rolling(window=lookback_hours, min_periods=lookback_hours).quantile(qh))
         forecast_bot10_series = (rolling_forecast_mean.rolling(window=lookback_hours, min_periods=lookback_hours).quantile(ql))
-
+    
+    signal = signal.reindex(now_list)
+    q_lo_series = q_lo_series.reindex(now_list)
+    q_hi_series = q_hi_series.reindex(now_list)
+    rolling_forecast_mean = rolling_forecast_mean.reindex(now_list)
+    forecast_top10_series = forecast_top10_series.reindex(now_list)
+    forecast_bot10_series = forecast_bot10_series.reindex(now_list)
+    selected_horizon_series = selected_horizon_series.reindex(now_list)
+    regime_state = regime_state.reindex(now_list)
+    
     entered_day = None
     position_side = None
     entry_time = None
@@ -169,11 +201,6 @@ def testing_execute_trading_strategy( bt_year, bt_quarter, model, outputs_by_yea
             liquidate_all()
             reset_position_state()
 
-            market.record_equity()
-            save_snapshot(now)
-            continue
-
-        if ( not use_dynamic_mfiv_signal and idx < lookback_hours):
             market.record_equity()
             save_snapshot(now)
             continue
@@ -518,7 +545,8 @@ def testing_execute_trading_strategy( bt_year, bt_quarter, model, outputs_by_yea
                 save_snapshot(now)
                 continue
 
-            mfiv_now = float(out_full[mfiv_col].iloc[idx])
+            # mfiv_now = float(out_full[mfiv_col].iloc[idx])
+            mfiv_now = float(out_full.loc[now, mfiv_col])
 
             if not np.isfinite(mfiv_now) or mfiv_now <= 0:
                 market.record_equity()
@@ -527,10 +555,26 @@ def testing_execute_trading_strategy( bt_year, bt_quarter, model, outputs_by_yea
             # ======================================================================================================
             # ===================== LOWER BOUNDARY NEEDS TO CHANGE TO MAKE POSITION DELTA NEUTRAL ==================
             # ======================================================================================================
-            lower_boundary = ( last * np.exp( -z * np.sqrt(mfiv_now) ))
+            # lower_boundary = ( last * np.exp( -z * np.sqrt(mfiv_now) ))
+            # upper_boundary = ( last * np.exp( z * np.sqrt(mfiv_now) ))
+            
+            sigma = np.sqrt(mfiv_now)
+            tau = expiry_days / 365.0
+            r_now = float(market.time_df.loc[now, "rfr"])
 
-            upper_boundary = ( last * np.exp( z * np.sqrt(mfiv_now) ))
-        
+            upper_boundary = ( last * np.exp( z * sigma ))
+
+            d1_call = (
+                np.log(last / upper_boundary) + (r_now + 0.5 * sigma * sigma) * tau
+            ) / (sigma * np.sqrt(tau))
+            call_delta = norm_cdf(d1_call)
+
+            target_put_prob = 1.0 - call_delta
+            d1_put = norm.ppf(target_put_prob)
+
+            lower_boundary = last * np.exp(
+                -(d1_put * sigma * np.sqrt(tau) - (r_now + 0.5 * sigma * sigma) * tau)
+            )
         acceptable_calls = [
             instrument
             for instrument

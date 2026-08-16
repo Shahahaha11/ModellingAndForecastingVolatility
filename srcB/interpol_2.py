@@ -1,15 +1,11 @@
 import numpy as np
 import pandas as pd
-from scipy.interpolate import CubicSpline
+from scipy.interpolate import PchipInterpolator
 from tqdm import tqdm
 from math import erf, sqrt, log, exp
-# LAST CHANGE : df0["hour"] = df0.index.floor("h") + pd.Timedelta(hours=1) –– 
-# This pipeline does the following :
-# Takes "hourly" option data (strikes, maturities, call/put prices) and BTC market data (spot, rate, forward).
-# Builds filled call and put price surfaces across strikes for each hour and maturity.
-# Computes hourly model-free implied variance and ATM Black-Scholes implied volatility for each horizon H.
-# Outputs filled call surface (df11), filled put surface (df12), and MFIV/BSIV time series (MFIV_byH).
-
+# THIS IS A COPY OF RECENT INTERPOL FILE : 
+# I INTEND TO CHANGE THE BELOW TO WORK WITH EXACT MATURITY REPRESENTING HORIZONS INSTEAD 
+# OF "NEAREST AVAILABLE MATURITY". THAT REQUIRES INTERPOLATING OVER .... 
 class MFIVPipeline:
     """
     One class that replicates BOTH cells exactly:
@@ -34,7 +30,7 @@ class MFIVPipeline:
     # Cell 1 helpers
     # =========================
     @staticmethod
-    def spline_fill_prices(g: pd.DataFrame) -> pd.DataFrame:
+    def spline_fill_prices(g: pd.DataFrame, K_grid: np.ndarray) -> pd.DataFrame:
         g = g.sort_values("strike")
         x = g["strike"].to_numpy(float)
         y = g["option_price"].to_numpy(float)
@@ -47,17 +43,11 @@ class MFIVPipeline:
         if x_u.size < 4:
             return pd.DataFrame()
 
-        step = np.min(np.diff(x_u))
-        if not np.isfinite(step) or step <= 0:
-            return pd.DataFrame()
-
-        K_grid = np.arange(x_u.min(), x_u.max() + step, step)
-
-        cs = CubicSpline(x_u, y_u, bc_type="natural", extrapolate=False)
+        cs = PchipInterpolator(x_u, y_u, extrapolate=False)
         p_grid = cs(K_grid)
 
         return pd.DataFrame({"strike": K_grid, "price": p_grid}).dropna(subset=["price"])
-
+    
     def build_surfaces(self): # uses spline fill prices
         # assumes df has: type, strike, maturity, option_price, and datetime index
         df0 = self.df.copy()
@@ -69,33 +59,36 @@ class MFIVPipeline:
         df0["cp"] = pd.Series(pd.NA, index=df0.index, dtype="string")
         df0.loc[t.isin(["c"]) | t.str.contains("call", na=False), "cp"] = "C"
         df0.loc[t.isin(["p"]) | t.str.contains("put",  na=False), "cp"] = "P"
+        
+        # ----- df11/df12: call+put price surfaces (filled across a SHARED strike grid) -----
+        rowsC, rowsP = [], []
+        for (hour, maturity), g_all in tqdm(df0.groupby(["hour", "maturity"])):
+            x_u_all = np.unique(g_all["strike"].to_numpy(float))
+            if x_u_all.size < 4:
+                continue
+            step = np.min(np.diff(x_u_all))
+            if not np.isfinite(step) or step <= 0:
+                continue
+            K_grid = np.arange(x_u_all.min(), x_u_all.max() + step, step)
 
-        # ----- df11: call price surface (filled across strikes) -----
-        rowsC = []
-        for (hour, maturity), g in tqdm(df0[df0["cp"] == "C"].groupby(["hour", "maturity"])):
-            out = self.spline_fill_prices(g)
-            if not out.empty:
-                out.insert(0, "maturity", maturity)
-                out.insert(0, "hour", hour)
-                rowsC.append(out)
+            outC = self.spline_fill_prices(g_all[g_all["cp"] == "C"], K_grid)
+            if not outC.empty:
+                outC.insert(0, "maturity", maturity)
+                outC.insert(0, "hour", hour)
+                rowsC.append(outC)
+
+            outP = self.spline_fill_prices(g_all[g_all["cp"] == "P"], K_grid)
+            if not outP.empty:
+                outP.insert(0, "maturity", maturity)
+                outP.insert(0, "hour", hour)
+                rowsP.append(outP)
 
         df11 = pd.concat(rowsC, ignore_index=True) if rowsC else pd.DataFrame(
             columns=["hour", "maturity", "strike", "price"]
         )
-
-        # ----- df12: put price surface (filled across strikes) -----
-        rowsP = []
-        for (hour, maturity), g in tqdm(df0[df0["cp"] == "P"].groupby(["hour", "maturity"])):
-            out = self.spline_fill_prices(g)
-            if not out.empty:
-                out.insert(0, "maturity", maturity)
-                out.insert(0, "hour", hour)
-                rowsP.append(out)
-
         df12 = pd.concat(rowsP, ignore_index=True) if rowsP else pd.DataFrame(
             columns=["hour", "maturity", "strike", "price"]
         )
-
         self.df11, self.df12 = df11, df12
         return df11, df12
 
@@ -139,8 +132,7 @@ class MFIVPipeline:
         return 0.5 * (lo + hi)
 
     @staticmethod
-    def mfiv_var_from_Q(K, Q, r, T_years, F,
-                        m_low=0.7, m_high=1.3, n_tail=200):
+    def mfiv_var_from_Q(K, Q, r, T_years, F, m_low=0.7, m_high=1.3, n_tail=200):
         K = np.asarray(K, float)
         Q = np.asarray(Q, float)
 
@@ -160,177 +152,107 @@ class MFIVPipeline:
         right_tail = np.logspace(np.log10(K[-1]), np.log10(K_hi), n_tail) if K_hi > K[-1] else []
 
         K_ext = np.unique(np.concatenate([left_tail, K, right_tail]))
-        Q_ext = np.interp(K_ext, K, Q, left=Q[0], right=Q[-1])
+        Q_ext = np.interp(K_ext, K, Q, left=0.0, right=0.0)
 
         integrand = Q_ext / (K_ext ** 2)
         integral = np.trapezoid(integrand, K_ext)
 
         var = (2.0 * np.exp(r * T_years) / T_years) * integral
         return var if np.isfinite(var) and var > 0 else np.nan
-
+    
+    def _mfiv_for_maturity(self, g_mat, S, r, T_years):
+        if g_mat.empty:
+            return np.nan
+        F = S * np.exp((r - self.q) * T_years)
+        K = g_mat["strike"].to_numpy(float)
+        C = g_mat["price_C"].to_numpy(float)
+        P = g_mat["price_P"].to_numpy(float)
+        Q = np.full_like(K, np.nan)
+        Q[K < F] = P[K < F]
+        Q[K > F] = C[K > F]
+        m = K / F
+        if m.min() > 0.85 or m.max() < 1.15:
+            return np.nan
+        return self.mfiv_var_from_Q(K, Q, r, T_years, F)
     def compute_mfiv_byH(self, H_LIST): # Needs df1 and df2 from build_surfaces()
         if self.df11 is None or self.df12 is None:
             raise ValueError("Run build_surfaces() first (needs df11/df12).")
 
-        MFIV_byH = {H: [] for H in H_LIST}
+        MFIV_byH = {}
 
-        # combine calls + puts
-        CP = pd.merge(
-            self.df11, self.df12,
-            on=["hour", "maturity", "strike"],
-            how="outer",
-            suffixes=("_C", "_P")
-        )
+        for H in H_LIST:
+            rows = []
+            # combine calls + puts (NO maturity interpolation)  
+            CP = pd.merge(
+                self.df11, self.df12,
+                on=["hour", "maturity", "strike"],
+                how="outer",
+                suffixes=("_C", "_P")
+            )
+            CP["hour"] = pd.to_datetime(CP["hour"]).dt.tz_localize(None)
+            CP["maturity"] = pd.to_datetime(CP["maturity"]).dt.tz_localize(None)
+            CP["T_hours"] = (CP["maturity"] - CP["hour"]).dt.total_seconds() / 3600.0
 
-        CP["hour"] = pd.to_datetime(CP["hour"]).dt.tz_localize(None)
-        CP["maturity"] = pd.to_datetime(CP["maturity"]).dt.tz_localize(None)
-        CP["T_hours"] = (CP["maturity"] - CP["hour"]).dt.total_seconds() / 3600.0
-
-        for hour, g in tqdm(CP.groupby("hour"), total=CP["hour"].nunique()):
-
-            if hour not in self.d_btc.index:
-                continue
-
-            S = float(self.d_btc.loc[hour, "Close"])
-            r = float(self.d_btc.loc[hour, "rfr"])
-
-            g = g.loc[g["T_hours"] > 0]
-
-            if g.empty:
-                continue
-
-            term_rows = []
-
-            # calculate MFIV separately for each actual expiry
-            for maturity, gm in g.groupby("maturity"):
-
-                T_hours = float(gm["T_hours"].iloc[0])
-                T_years = T_hours / (24.0 * 365.0)
-
-                F = S * np.exp((r - self.q) * T_years)
-
-                K = gm["strike"].to_numpy(float)
-                C = gm["price_C"].to_numpy(float)
-                P = gm["price_P"].to_numpy(float)
-
-                Q = np.full_like(K, np.nan)
-                Q[K < F] = P[K < F]
-                Q[K > F] = C[K > F]
-
-                m = K / F
-                if m.min() > 0.85 or m.max() < 1.15:
+            for hour, g in tqdm(CP.groupby("hour"), total=CP["hour"].nunique()):
+                if hour not in self.d_btc.index:
                     continue
 
-                mfiv_var = self.mfiv_var_from_Q(
-                    K, Q, r, T_years, F
-                )
+                S = float(self.d_btc.loc[hour, "Close"])
+                r = float(self.d_btc.loc[hour, "rfr"])
+                g = g.loc[g["T_hours"] > 0]
+                if g.empty:
+                    continue
+
+                nearest_maturity = g.loc[(g["T_hours"] - H).abs().idxmin(), "maturity"]
+                g_nearest = g.loc[g["maturity"] == nearest_maturity]
+                T_years_nearest = float(g_nearest["T_hours"].iloc[0]) / (24.0 * 365.0)
+
+                maturities = g[["maturity", "T_hours"]].drop_duplicates().sort_values("T_hours")
+                below = maturities.loc[maturities["T_hours"] <= H]
+                above = maturities.loc[maturities["T_hours"] > H]
+
+                mfiv_var = np.nan
+                if not below.empty and not above.empty:
+                    mat1, T1_hours = below.iloc[-1]["maturity"], below.iloc[-1]["T_hours"]
+                    mat2, T2_hours = above.iloc[0]["maturity"], above.iloc[0]["T_hours"]
+                    T1_years = T1_hours / 8760.0
+                    T2_years = T2_hours / 8760.0
+
+                    mfiv1 = self._mfiv_for_maturity(g.loc[g["maturity"] == mat1], S, r, T1_years)
+                    mfiv2 = self._mfiv_for_maturity(g.loc[g["maturity"] == mat2], S, r, T2_years)
+
+                    if np.isfinite(mfiv1) and np.isfinite(mfiv2):
+                        total1 = mfiv1 * T1_years
+                        total2 = mfiv2 * T2_years
+                        T_target = H / 8760.0
+                        total_H = total1 + (total2 - total1) * (T_target - T1_years) / (T2_years - T1_years)
+                        mfiv_var = total_H / T_target
+
+                if not np.isfinite(mfiv_var):
+                    # fallback: old nearest-maturity behavior
+                    mfiv_var = self._mfiv_for_maturity(g_nearest, S, r, T_years_nearest)
 
                 if not np.isfinite(mfiv_var):
                     continue
 
-                # ATM BSIV for this expiry
+                # ATM BSIV from nearest-maturity price  <-- unchanged, independent of MFIV
+                K = g_nearest["strike"].to_numpy(float)
+                C = g_nearest["price_C"].to_numpy(float)
+                P = g_nearest["price_P"].to_numpy(float)
+                F = S * np.exp((r - self.q) * T_years_nearest)
                 atm_i = np.abs(K - F).argmin()
-
                 px = C[atm_i] if K[atm_i] >= F else P[atm_i]
                 is_call = K[atm_i] >= F
 
-                bsIV = self.bs_implied_vol_bisect(
-                    is_call, S, K[atm_i],
-                    T_years, r, self.q, px
-                )
-
-                if not np.isfinite(bsIV):
-                    continue
-
-                term_rows.append(
-                    (T_hours, bsIV, mfiv_var)
-                )
-
-            if len(term_rows) < 2:
-                continue
-
-            term = pd.DataFrame(
-                term_rows,
-                columns=["T_hours", "bsIV", "MFIV"]
-            ).sort_values("T_hours").drop_duplicates("T_hours")
-
-            T = term["T_hours"].to_numpy(float)
-
-            # interpolate each requested constant horizon
-            for H in H_LIST:
-
-                # need an expiry on both sides — no extrapolation
-                if H < T[0] or H > T[-1]:
-                    continue
-
-                j = np.searchsorted(T, H)
-
-                # exact listed expiry
-                if j < len(T) and np.isclose(T[j], H):
-
-                    mfiv_H = float(term["MFIV"].iloc[j])
-                    bsIV_H = float(term["bsIV"].iloc[j])
-
-                else:
-
-                    i1 = j - 1
-                    i2 = j
-
-                    T1 = T[i1]
-                    T2 = T[i2]
-
-                    weight = (H - T1) / (T2 - T1)
-
-                    # MFIV: interpolate TOTAL variance
-                    total_var_1 = (
-                        term["MFIV"].iloc[i1]
-                        * T1 / (24.0 * 365.0)
-                    )
-
-                    total_var_2 = (
-                        term["MFIV"].iloc[i2]
-                        * T2 / (24.0 * 365.0)
-                    )
-
-                    total_var_H = (
-                        total_var_1
-                        + weight * (total_var_2 - total_var_1)
-                    )
-
-                    mfiv_H = total_var_H / (
-                        H / (24.0 * 365.0)
-                    )
-
-                    # BSIV: interpolate total variance as well
-                    total_bs_1 = (
-                        term["bsIV"].iloc[i1] ** 2
-                        * T1 / (24.0 * 365.0)
-                    )
-
-                    total_bs_2 = (
-                        term["bsIV"].iloc[i2] ** 2
-                        * T2 / (24.0 * 365.0)
-                    )
-
-                    total_bs_H = (
-                        total_bs_1
-                        + weight * (total_bs_2 - total_bs_1)
-                    )
-
-                    bsIV_H = np.sqrt(
-                        total_bs_H
-                        / (H / (24.0 * 365.0))
-                    )
-
-                MFIV_byH[H].append(
-                    (hour, bsIV_H, mfiv_H)
-                )
-
-        for H in H_LIST:
-            MFIV_byH[H] = pd.DataFrame(
-                MFIV_byH[H],
-                columns=["hour", "bsIV", "MFIV"]
-            ).set_index("hour").sort_index()
+                lower = max(0.0, (S - K[atm_i]) if is_call else (K[atm_i] - S))
+                upper = S if is_call else K[atm_i]
+                bsIV = np.nan
+                if lower <= px <= upper:
+                    bsIV = self.bs_implied_vol_bisect(is_call, S, K[atm_i], T_years_nearest, r, self.q, px)
+                rows.append((hour, bsIV, mfiv_var))
+                
+            df_out = pd.DataFrame(rows, columns=["hour", "bsIV", "MFIV"]).set_index("hour").sort_index()
+            MFIV_byH[H] = df_out
 
         self.MFIV_byH = MFIV_byH
         return MFIV_byH
