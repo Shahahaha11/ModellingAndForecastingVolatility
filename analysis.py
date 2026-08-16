@@ -370,6 +370,15 @@ print(greek_tests[:1])
 print(pd.Series([x["action"] for x in market.transactions]).value_counts())
 
 # ==================================================================================================================
+# ============================================= SAVE DICT  ========================================================
+# ==================================================================================================================
+import sys, os
+os.makedirs("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/data_strategy_results", exist_ok = True)
+
+import pickle 
+with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/data_strategy_results/strategy_results.pkl", "wb") as f:
+    pickle.dump(strategy_results, f)
+# ==================================================================================================================
 # ============================================= PLOT EQUITY  ========================================================
 # ==================================================================================================================
 import matplotlib.pyplot as plt
