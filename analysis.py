@@ -523,7 +523,7 @@ for entry_time, g in legs.groupby("entry_time"):
         "put_pnl": put_pnl,
         "total_pnl": call_pnl + put_pnl,
         "call_result": "PROFIT" if call_pnl > 0 else "LOSS",
-        "put_result": "PROFIT" if put_pnl > 0 else "LOSS" if put_pnl < 0 else "FLAT"
+        "put_result": "PROFIT" if put_pnl > 0 else "LOSS" if put_pnl < 0 else "FLAT",
         "position_result": "PROFIT" if call_pnl + put_pnl > 0 else "LOSS"
     })
 
