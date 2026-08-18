@@ -192,6 +192,10 @@ import pickle
 with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by_year/outputs_by_year_04_interpol2.pkl", "rb") as f:
     outputs_by_year = pickle.load(f)
 
+
+# ==================================== BORROW MFIV COLS FROM XQ_BY_YEAR ================================
+# ===========================================================================================================
+
 MFIVS = list(range(2, 577))
 QUARTERS = ["q1", "q2", "q3", "q4"]
 mfiv_cols = [f"MFIV_{H}" for H in MFIVS]
@@ -295,7 +299,7 @@ for YEAR in YEARS:
                 hold_days=7,
                 lookback_hours=60,
                 mean_hours=60,
-                ql=0.2,
+                ql=0.20,
                 qh=0.70,
                 z=1.645
             )
@@ -318,52 +322,7 @@ for YEAR in YEARS:
         }
 
         globals()[history_key] = equity_curve
-# ==================================================================================================================
-# ======================================= TESTING MAIN  ==========================================================
-# ==================================================================================================================
-# from srcB.trader_testing import testing_execute_trading_strategy
-# YEARS = [2019, 2020, 2021]
-# MODELS = ["garch_n_mfiv" , "garch"]
 
-# strategy_results = {}
-
-# for YEAR in YEARS:
-#     for MODEL in MODELS :
-
-#         market = Market(
-#             option_df=df_raw_by_year[YEAR],
-#             time_df=d_btc_raw_by_year[YEAR],
-#             starting_cash=100_000,
-#             im_multiplier=0.15,
-#             mm_buffer_rate=0.05,
-#         )
-
-#         greek_tests = []
-#         yearly_snapshots = []
-
-#         for q in ["q1", "q2", "q3", "q4"]:
-#             snapshots, greek_tests_q = testing_execute_trading_strategy(
-#                 bt_year=YEAR, bt_quarter=q, model=MODEL, outputs_by_year=outputs_by_year, market=market, quantity=10, expiry_days=30, hold_days=7, lookback_hours=60, mean_hours=60, ql=0.2, qh=0.70, z=1.645
-#             )
-
-#             greek_tests.extend(greek_tests_q)
-#             yearly_snapshots.extend(snapshots)
-
-#         history_key = f"{MODEL}_{str(YEAR)[2:]}"
-#         equity_curve = market.get_equity_history()
-
-#         strategy_results[history_key] = {
-#             "equity_curve": equity_curve,
-#             "snapshots": yearly_snapshots,
-#             "greek_tests" : greek_tests,
-#             "orders": list(market.orders),
-#             "transactions": list(market.transactions),
-#             "final_cash": market.cash,
-#             "required_margin": market.get_total_required_margin(),
-#             "free_liquidity": market.get_free_liquidity(),
-#         }
-
-#         globals()[history_key] = equity_curve
 # ==================================================================================================================
 print(len(greek_tests))
 print(greek_tests[:1])
@@ -372,16 +331,22 @@ print(pd.Series([x["action"] for x in market.transactions]).value_counts())
 # ==================================================================================================================
 # ============================================= SAVE DICT  ========================================================
 # ==================================================================================================================
-import sys, os
-os.makedirs("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/data_strategy_results", exist_ok = True)
+# import sys, os
+# os.makedirs("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/data_strategy_results", exist_ok = True)
 
-import pickle 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/data_strategy_results/strategy_results.pkl", "wb") as f:
-    pickle.dump(strategy_results, f)
+# import pickle 
+# with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/data_strategy_results/strategy_results.pkl", "wb") as f:
+#     pickle.dump(strategy_results, f)
+
+# LOAD BACK 
+# with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/data_strategy_results/strategy_results.pkl", "rb") as f:
+#     strategy_results = pickle.load(f)
+
 # ==================================================================================================================
 # ============================================= PLOT EQUITY  ========================================================
 # ==================================================================================================================
 import matplotlib.pyplot as plt
+MODELS = ["garch_n_mfiv", "garch"]
 PLOT_YEAR = 2020
 plt.figure(figsize=(12, 6))
 for MODEL in MODELS:
@@ -399,6 +364,8 @@ plt.show()
 # ============================================= PLOT DELTA  ========================================================
 # ==================================================================================================================
 import matplotlib.pyplot as plt
+PLOT_YEAR = 2020
+greek_tests = strategy_results[f"garch_n_mfiv_{str(PLOT_YEAR)[2:]}"]["greek_tests"]
 M = 1
 N = 5
 for x in greek_tests[M:N]:
@@ -414,6 +381,62 @@ for x in greek_tests[M:N]:
     ax.set_ylabel("Delta")
     ax.legend()
     plt.show()
+
+# ========================================================================================================================================
+# ====================================================== STRATEGY DIAGNOSTICS ============================================================
+# ========================================================================================================================================
+import pandas as pd
+y = 2021
+the_model = "garch_n_mfiv"
+# the_model = "garch_n_mfiv"
+position_side = "short_strangle"
+tx = pd.DataFrame(strategy_results[f"{the_model}_{str(y)[2:]}"]["transactions"]).sort_values("time")
+open_actions = {"buy_to_open", "sell_to_open"}
+close_actions = {"buy_to_close", "sell_to_close", "liquidate", "expiry_settlement"}
+trades = []
+open_pos = {}
+for _, r in tx.iterrows():
+    sym = r["symbol"]
+    if r["action"] in open_actions:
+        open_pos[sym] = {
+            "entry_time": r["time"],
+            "right": r["right"],
+            "direction": r["held_direction"],
+            "pnl": float(r["cash_change"])
+        }
+    elif r["action"] in close_actions and sym in open_pos:
+        open_pos[sym]["pnl"] += float(r["cash_change"])
+        open_pos[sym]["exit_time"] = r["time"]
+        trades.append({"symbol": sym, **open_pos.pop(sym)})
+legs = pd.DataFrame(trades)
+groups = []
+for entry_time, g in legs.groupby("entry_time"):
+    side = "short_strangle" if (g["direction"] == "sell").all() else "long_straddle"
+    if side != position_side:
+        continue
+    call_pnl = g.loc[g["right"] == "C", "pnl"].sum()
+    put_pnl = g.loc[g["right"] == "P", "pnl"].sum()
+    groups.append({
+        "entry": entry_time,
+        "exit": g["exit_time"].max(),
+        "side": side,
+        "call_pnl": call_pnl,
+        "put_pnl": put_pnl,
+        "total_pnl": call_pnl + put_pnl,
+        "call_result": "PROFIT" if call_pnl > 0 else "LOSS",
+        "put_result": "PROFIT" if put_pnl > 0 else "LOSS" if put_pnl < 0 else "FLAT",
+        "position_result": "PROFIT" if call_pnl + put_pnl > 0 else "LOSS"
+    })
+result = pd.DataFrame(groups)
+
+print(result.to_string(index=False))
+print("\nPositions:", len(result))
+print("Profitable positions:", (result["total_pnl"] > 0).sum())
+print("Losing positions:", (result["total_pnl"] < 0).sum())
+print("Call legs profit:", (result["call_pnl"] > 0).sum())
+print("Call legs loss:", (result["call_pnl"] < 0).sum())
+print("Put legs profit:", (result["put_pnl"] > 0).sum())
+print("Put legs loss:", (result["put_pnl"] < 0).sum())
 
 # ==================================================================================================================
 # ============================================= PLOTLY SPOT PLOT  ==================================================
@@ -481,60 +504,6 @@ x = strategy_results["garch_n_mfiv_21"]["transactions"]
 
 print(x[0])
 print(x[-1])
-# ========================================================================================================================================
-# ====================================================== STRATEGY DIAGNOSTICS ============================================================
-# ========================================================================================================================================
-import pandas as pd
-y = 2020
-the_model = "garch_n_mfiv"
-position_side = "short_strangle"
-tx = pd.DataFrame(strategy_results[f"{the_model}_{str(y)[2:]}"]["transactions"]).sort_values("time")
-open_actions = {"buy_to_open", "sell_to_open"}
-close_actions = {"buy_to_close", "sell_to_close", "liquidate", "expiry_settlement"}
-trades = []
-open_pos = {}
-for _, r in tx.iterrows():
-    sym = r["symbol"]
-    if r["action"] in open_actions:
-        open_pos[sym] = {
-            "entry_time": r["time"],
-            "right": r["right"],
-            "direction": r["held_direction"],
-            "pnl": float(r["cash_change"])
-        }
-    elif r["action"] in close_actions and sym in open_pos:
-        open_pos[sym]["pnl"] += float(r["cash_change"])
-        open_pos[sym]["exit_time"] = r["time"]
-        trades.append({"symbol": sym, **open_pos.pop(sym)})
-legs = pd.DataFrame(trades)
-groups = []
-for entry_time, g in legs.groupby("entry_time"):
-    side = "short_strangle" if (g["direction"] == "sell").all() else "long_straddle"
-    if side != position_side:
-        continue
-    call_pnl = g.loc[g["right"] == "C", "pnl"].sum()
-    put_pnl = g.loc[g["right"] == "P", "pnl"].sum()
-    groups.append({
-        "entry": entry_time,
-        "exit": g["exit_time"].max(),
-        "side": side,
-        "call_pnl": call_pnl,
-        "put_pnl": put_pnl,
-        "total_pnl": call_pnl + put_pnl,
-        "call_result": "PROFIT" if call_pnl > 0 else "LOSS",
-        "put_result": "PROFIT" if put_pnl > 0 else "LOSS" if put_pnl < 0 else "FLAT",
-        "position_result": "PROFIT" if call_pnl + put_pnl > 0 else "LOSS"
-    })
-result = pd.DataFrame(groups)
-
-print(result.to_string(index=False))
-print("\nPositions:", len(result))
-print("Profitable positions:", (result["total_pnl"] > 0).sum())
-print("Losing positions:", (result["total_pnl"] < 0).sum())
-print("Call legs profit:", (result["call_pnl"] > 0).sum())
-print("Call legs loss:", (result["call_pnl"] < 0).sum())
-print("Put legs profit:", (result["put_pnl"] > 0).sum())
-print("Put legs loss:", (result["put_pnl"] < 0).sum())
 
 # ====================================================== ROUGH ============================================================
 outputs_by_year[2021]["q2"].regime_state.nunique()
@@ -568,7 +537,9 @@ print("short:", (s[m] >= hi[m]).sum())
 # for i in x["selected_puts"]:
 #     print(i.Strike, i.Expiry, i.Right, i.Direction)
 
-# ====================================================== FOR GPT ============================================================
+# ==================================================================================================================
+# ====================================================== FOR GPT ===================================================
+# ==================================================================================================================
 print(df_raw_by_year[2021].dropna(how="all").head(3))
 print(d_btc_raw_by_year[2021].dropna(how="all").head(3))
 print(outputs_by_year[2021]["q2"].dropna(how="all").head(3))

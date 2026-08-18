@@ -253,10 +253,12 @@ def testing_execute_trading_strategy(
             (
                 call_count > 0
                 and put_count > 0
+                and call_count == put_count
             )
             or (
                 len(long_calls_held) > 0
                 and len(long_puts_held) > 0
+                and len(long_calls_held) == len(long_puts_held)
             )
         )
 
@@ -562,19 +564,66 @@ def testing_execute_trading_strategy(
             tau = expiry_days / 365.0
             r_now = float(market.time_df.loc[now, "rfr"])
 
-            upper_boundary = ( last * np.exp( z * sigma ))
+            upper_boundary_0 = last * np.exp(z * sigma)
+            lower_boundary_0 = last * np.exp(-z * sigma)
 
-            d1_call = (
-                np.log(last / upper_boundary) + (r_now + 0.5 * sigma * sigma) * tau
-            ) / (sigma * np.sqrt(tau))
-            call_delta = norm_cdf(d1_call)
+            if model == "garch_n_mfiv":
+                recent_prices = market.close_price(n=strike_horizon + 1)
 
-            target_put_prob = 1.0 - call_delta
-            d1_put = norm.ppf(target_put_prob)
+                if len(recent_prices) < strike_horizon + 1:
+                    market.record_equity()
+                    save_snapshot(now)
+                    continue
 
-            lower_boundary = last * np.exp(
-                -(d1_put * sigma * np.sqrt(tau) - (r_now + 0.5 * sigma * sigma) * tau)
-            )
+                recent_return = np.log(last / float(recent_prices.iloc[0]))
+
+                if recent_return > 0:
+                    lower_boundary = lower_boundary_0
+
+                    d1_put = (
+                        np.log(last / lower_boundary)
+                        + (r_now + 0.5 * sigma * sigma) * tau
+                    ) / (sigma * np.sqrt(tau))
+
+                    put_delta = 1.0 - norm_cdf(d1_put)
+                    d1_call = norm.ppf(put_delta)
+
+                    upper_boundary = last * np.exp(
+                        (r_now + 0.5 * sigma * sigma) * tau
+                        - d1_call * sigma * np.sqrt(tau)
+                    )
+
+                else:
+                    upper_boundary = upper_boundary_0
+
+                    d1_call = (
+                        np.log(last / upper_boundary)
+                        + (r_now + 0.5 * sigma * sigma) * tau
+                    ) / (sigma * np.sqrt(tau))
+
+                    call_delta = norm_cdf(d1_call)
+                    d1_put = norm.ppf(1.0 - call_delta)
+
+                    lower_boundary = last * np.exp(
+                        (r_now + 0.5 * sigma * sigma) * tau
+                        - d1_put * sigma * np.sqrt(tau)
+                    )
+
+            else:
+                upper_boundary = upper_boundary_0
+
+                d1_call = (
+                    np.log(last / upper_boundary)
+                    + (r_now + 0.5 * sigma * sigma) * tau
+                ) / (sigma * np.sqrt(tau))
+
+                call_delta = norm_cdf(d1_call)
+                d1_put = norm.ppf(1.0 - call_delta)
+
+                lower_boundary = last * np.exp(
+                    (r_now + 0.5 * sigma * sigma) * tau
+                    - d1_put * sigma * np.sqrt(tau)
+                )
         acceptable_calls = [
             instrument
             for instrument
