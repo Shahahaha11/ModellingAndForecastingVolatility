@@ -3,9 +3,6 @@ import pandas as pd
 from scipy.interpolate import PchipInterpolator
 from tqdm import tqdm
 from math import erf, sqrt, log, exp
-# THIS IS A COPY OF RECENT INTERPOL FILE : 
-# I INTEND TO CHANGE THE BELOW TO WORK WITH EXACT MATURITY REPRESENTING HORIZONS INSTEAD 
-# OF "NEAREST AVAILABLE MATURITY". THAT REQUIRES INTERPOLATING OVER .... 
 class MFIVPipeline:
     """
     One class that replicates BOTH cells exactly:

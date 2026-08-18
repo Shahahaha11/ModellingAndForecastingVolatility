@@ -59,10 +59,12 @@ class dataprep:
         df["type"] = df["instrument_name"].str.split("-").str[3].astype(str)
         df["option_price"] = df.price * df.index_price
 
-        df["maturity"] = pd.to_datetime(
-            df.instrument_name.str.split("-").str[1],
-            format="%d%b%y"
-        )
+        df["maturity"] = (
+            pd.to_datetime(
+                df.instrument_name.str.split("-").str[1],
+                format="%d%b%y"
+            )
+            + pd.Timedelta(hours=8))
 
         if "date_time" in df.columns:
             df = df.set_index("date_time", drop=False)
