@@ -10,19 +10,46 @@ class MFIVPipeline:
       2) builds MFIV_byH via nearest-maturity-to-H per strike, MFIV integral, and ATM BSIV
     """
 
-    def __init__(self, df: pd.DataFrame, d_btc: pd.DataFrame, q: float = 0.0):
+    def __init__(self, df: pd.DataFrame, d_btc: pd.DataFrame, d_fut: pd.DataFrame, q: float = 0.0):
         self.df = df
         self.d_btc = d_btc.copy()
+        self.d_fut = d_fut.copy()
         self.q = q
-
-        # match your code: clean time index for d_btc
         self.d_btc.index = pd.to_datetime(self.d_btc.index).tz_localize(None)
+        
+        self.d_fut["hour"] = pd.to_datetime(self.d_fut["hour"]).dt.tz_localize(None)
+        self.d_fut["maturity"] = pd.to_datetime(self.d_fut["maturity"]).dt.tz_localize(None)
 
-        # outputs
+        self.fut_by_hour = {}
+
+        for hour, g in self.d_fut.groupby("hour"):
+            T_hours = (
+                (g["maturity"] - hour).dt.total_seconds() / 3600.0
+            ).to_numpy(float)
+
+            F = g["F"].to_numpy(float)
+
+            ok = (
+                (T_hours > 0)
+                & np.isfinite(F)
+                & (F > 0)
+            )
+
+            T_hours = T_hours[ok]
+            F = F[ok]
+
+            idx = np.argsort(T_hours)
+
+            self.fut_by_hour[hour] = (
+                T_hours[idx],
+                F[idx]
+            )
+
         self.df11 = None
         self.df12 = None
+        self.mfiv_maturity = None
         self.MFIV_byH = None
-
+        
     # =========================
     # Cell 1 helpers
     # =========================
@@ -156,11 +183,33 @@ class MFIVPipeline:
 
         var = (2.0 * np.exp(r * T_years) / T_years) * integral
         return var if np.isfinite(var) and var > 0 else np.nan
-    
-    def _mfiv_for_maturity(self, g_mat, S, r, T_years):
-        if g_mat.empty:
+
+    def _forward_for_maturity(self, hour, maturity, S):
+
+        curve = self.fut_by_hour.get(hour)
+
+        if curve is None:
             return np.nan
-        F = S * np.exp((r - self.q) * T_years)
+
+        T_hours, F = curve
+
+        if len(T_hours) == 0:
+            return np.nan
+
+        T_target = (maturity - hour).total_seconds() / 3600.0
+
+        if T_target <= 0 or T_target > T_hours[-1]:
+            return np.nan
+
+        T = np.r_[0.0, T_hours]
+        logF = np.r_[np.log(S), np.log(F)]
+
+        return float(
+            np.exp(np.interp(T_target, T, logF))
+        )
+    def _mfiv_for_maturity(self, g_mat, r, T_years, F):
+        if g_mat.empty or not np.isfinite(F):
+            return np.nan
         K = g_mat["strike"].to_numpy(float)
         C = g_mat["price_C"].to_numpy(float)
         P = g_mat["price_P"].to_numpy(float)
@@ -171,91 +220,217 @@ class MFIVPipeline:
         if m.min() > 0.85 or m.max() < 1.15:
             return np.nan
         return self.mfiv_var_from_Q(K, Q, r, T_years, F)
-    def compute_mfiv_byH(self, H_LIST): # Needs df1 and df2 from build_surfaces()
+
+    def precompute_mfiv_maturities(self):
         if self.df11 is None or self.df12 is None:
             raise ValueError("Run build_surfaces() first (needs df11/df12).")
+
+        CP = pd.merge(
+            self.df11, self.df12,
+            on=["hour", "maturity", "strike"],
+            how="outer",
+            suffixes=("_C", "_P")
+        )
+
+        CP["hour"] = pd.to_datetime(CP["hour"]).dt.tz_localize(None)
+        CP["maturity"] = pd.to_datetime(CP["maturity"]).dt.tz_localize(None)
+
+        CP["T_hours"] = (
+            (CP["maturity"] - CP["hour"]).dt.total_seconds() / 3600.0
+        )
+
+        rows = []
+
+        for hour, g in tqdm(
+            CP.groupby("hour"),
+            total=CP["hour"].nunique()
+        ):
+            if hour not in self.d_btc.index:
+                continue
+
+            S = float(self.d_btc.loc[hour, "Close"])
+            r = float(self.d_btc.loc[hour, "rfr"])
+
+            g = g.loc[g["T_hours"] > 0]
+
+            if g.empty:
+                continue
+
+            for maturity, g_mat in g.groupby("maturity"):
+
+                T_hours = float(g_mat["T_hours"].iloc[0])
+                T_years = T_hours / 8760.0
+
+                F = self._forward_for_maturity(
+                    hour, maturity, S
+                )
+
+                mfiv_var = self._mfiv_for_maturity(
+                    g_mat, r, T_years, F
+                )
+
+                bsIV = np.nan
+
+                if np.isfinite(F):
+                    K = g_mat["strike"].to_numpy(float)
+                    C = g_mat["price_C"].to_numpy(float)
+                    P = g_mat["price_P"].to_numpy(float)
+
+                    atm_i = np.abs(K - F).argmin()
+
+                    px = (
+                        C[atm_i]
+                        if K[atm_i] >= F
+                        else P[atm_i]
+                    )
+
+                    is_call = K[atm_i] >= F
+
+                    lower = max(
+                        0.0,
+                        (S - K[atm_i])
+                        if is_call
+                        else (K[atm_i] - S)
+                    )
+
+                    upper = S if is_call else K[atm_i]
+
+                    if lower <= px <= upper:
+                        bsIV = self.bs_implied_vol_bisect(
+                            is_call,
+                            S,
+                            K[atm_i],
+                            T_years,
+                            r,
+                            self.q,
+                            px
+                        )
+
+                total_var = (
+                    mfiv_var * T_years
+                    if np.isfinite(mfiv_var)
+                    else np.nan
+                )
+
+                rows.append(
+                    (
+                        hour,
+                        maturity,
+                        T_hours,
+                        F,
+                        bsIV,
+                        mfiv_var,
+                        total_var
+                    )
+                )
+
+        self.mfiv_maturity = (
+            pd.DataFrame(
+                rows,
+                columns=[
+                    "hour",
+                    "maturity",
+                    "T_hours",
+                    "F",
+                    "bsIV",
+                    "MFIV",
+                    "total_var"
+                ]
+            )
+            .sort_values(["hour", "T_hours"])
+            .reset_index(drop=True)
+        )
+
+        return self.mfiv_maturity
+        
+    def compute_mfiv_byH(self, H_LIST):
+
+        if self.mfiv_maturity is None:
+            raise ValueError("Set mfiv_maturity or run precompute_mfiv_maturities() first.")
+
+        rows_by_H = {H: [] for H in H_LIST}
+
+        for hour, g in tqdm(
+            self.mfiv_maturity.groupby("hour"),
+            total=self.mfiv_maturity["hour"].nunique()
+        ):
+
+            g = g.sort_values("T_hours")
+
+            T = g["T_hours"].to_numpy(float)
+            mfiv = g["MFIV"].to_numpy(float)
+            total_var = g["total_var"].to_numpy(float)
+            bsiv = g["bsIV"].to_numpy(float)
+
+            if len(T) == 0:
+                continue
+
+            for H in H_LIST:
+
+                nearest_i = np.abs(T - H).argmin()
+
+                mfiv_var = np.nan
+
+                j = np.searchsorted(
+                    T,
+                    H,
+                    side="right"
+                )
+
+                if j > 0 and j < len(T):
+
+                    i1 = j - 1
+                    i2 = j
+
+                    if (
+                        np.isfinite(mfiv[i1])
+                        and np.isfinite(mfiv[i2])
+                    ):
+                        T1 = T[i1] / 8760.0
+                        T2 = T[i2] / 8760.0
+                        T_target = H / 8760.0
+
+                        total_H = (
+                            total_var[i1]
+                            + (total_var[i2] - total_var[i1])
+                            * (T_target - T1)
+                            / (T2 - T1)
+                        )
+
+                        mfiv_var = total_H / T_target
+
+                # same nearest-maturity fallback
+                if not np.isfinite(mfiv_var):
+                    mfiv_var = mfiv[nearest_i]
+
+                if not np.isfinite(mfiv_var):
+                    continue
+
+                rows_by_H[H].append(
+                    (
+                        hour,
+                        bsiv[nearest_i],
+                        mfiv_var
+                    )
+                )
 
         MFIV_byH = {}
 
         for H in H_LIST:
-            rows = []
-            # combine calls + puts (NO maturity interpolation)  
-            CP = pd.merge(
-                self.df11, self.df12,
-                on=["hour", "maturity", "strike"],
-                how="outer",
-                suffixes=("_C", "_P")
+            MFIV_byH[H] = (
+                pd.DataFrame(
+                    rows_by_H[H],
+                    columns=["hour", "bsIV", "MFIV"]
+                )
+                .set_index("hour")
+                .sort_index()
             )
-            CP["hour"] = pd.to_datetime(CP["hour"]).dt.tz_localize(None)
-            CP["maturity"] = pd.to_datetime(CP["maturity"]).dt.tz_localize(None)
-            CP["T_hours"] = (CP["maturity"] - CP["hour"]).dt.total_seconds() / 3600.0
-
-            for hour, g in tqdm(CP.groupby("hour"), total=CP["hour"].nunique()):
-                if hour not in self.d_btc.index:
-                    continue
-
-                S = float(self.d_btc.loc[hour, "Close"])
-                r = float(self.d_btc.loc[hour, "rfr"])
-                g = g.loc[g["T_hours"] > 0]
-                if g.empty:
-                    continue
-
-                nearest_maturity = g.loc[(g["T_hours"] - H).abs().idxmin(), "maturity"]
-                g_nearest = g.loc[g["maturity"] == nearest_maturity]
-                T_years_nearest = float(g_nearest["T_hours"].iloc[0]) / (24.0 * 365.0)
-
-                maturities = g[["maturity", "T_hours"]].drop_duplicates().sort_values("T_hours")
-                below = maturities.loc[maturities["T_hours"] <= H]
-                above = maturities.loc[maturities["T_hours"] > H]
-
-                mfiv_var = np.nan
-                if not below.empty and not above.empty:
-                    mat1, T1_hours = below.iloc[-1]["maturity"], below.iloc[-1]["T_hours"]
-                    mat2, T2_hours = above.iloc[0]["maturity"], above.iloc[0]["T_hours"]
-                    T1_years = T1_hours / 8760.0
-                    T2_years = T2_hours / 8760.0
-
-                    mfiv1 = self._mfiv_for_maturity(g.loc[g["maturity"] == mat1], S, r, T1_years)
-                    mfiv2 = self._mfiv_for_maturity(g.loc[g["maturity"] == mat2], S, r, T2_years)
-
-                    if np.isfinite(mfiv1) and np.isfinite(mfiv2):
-                        total1 = mfiv1 * T1_years
-                        total2 = mfiv2 * T2_years
-                        T_target = H / 8760.0
-                        total_H = total1 + (total2 - total1) * (T_target - T1_years) / (T2_years - T1_years)
-                        mfiv_var = total_H / T_target
-
-                if not np.isfinite(mfiv_var):
-                    # fallback: old nearest-maturity behavior
-                    mfiv_var = self._mfiv_for_maturity(g_nearest, S, r, T_years_nearest)
-
-                if not np.isfinite(mfiv_var):
-                    continue
-
-                # ATM BSIV from nearest-maturity price  <-- unchanged, independent of MFIV
-                K = g_nearest["strike"].to_numpy(float)
-                C = g_nearest["price_C"].to_numpy(float)
-                P = g_nearest["price_P"].to_numpy(float)
-                F = S * np.exp((r - self.q) * T_years_nearest)
-                atm_i = np.abs(K - F).argmin()
-                px = C[atm_i] if K[atm_i] >= F else P[atm_i]
-                is_call = K[atm_i] >= F
-
-                lower = max(0.0, (S - K[atm_i]) if is_call else (K[atm_i] - S))
-                upper = S if is_call else K[atm_i]
-                bsIV = np.nan
-                if lower <= px <= upper:
-                    bsIV = self.bs_implied_vol_bisect(is_call, S, K[atm_i], T_years_nearest, r, self.q, px)
-                rows.append((hour, bsIV, mfiv_var))
-                
-            df_out = pd.DataFrame(rows, columns=["hour", "bsIV", "MFIV"]).set_index("hour").sort_index()
-            MFIV_byH[H] = df_out
 
         self.MFIV_byH = MFIV_byH
         return MFIV_byH
-
+    
     def run(self, H_LIST):
         df11, df12 = self.build_surfaces()
+        self.precompute_mfiv_maturities()
         MFIV_byH = self.compute_mfiv_byH(H_LIST)
         return df11, df12, MFIV_byH
-

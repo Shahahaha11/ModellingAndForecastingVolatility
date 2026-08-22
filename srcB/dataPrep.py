@@ -63,7 +63,7 @@ class dataprep:
             pd.to_datetime(
                 df.instrument_name.str.split("-").str[1],
                 format="%d%b%y"
-            )
+            ) 
             + pd.Timedelta(hours=8))
 
         if "date_time" in df.columns:
@@ -74,54 +74,39 @@ class dataprep:
 
         self.df = df
         return df
-    
+        
     @staticmethod
     def get_rfr(d_btc_index, df_index):
         d_btc_index = pd.to_datetime(d_btc_index)
         df_index = pd.to_datetime(df_index)
+
         d_btc_index = d_btc_index.tz_localize(None) if d_btc_index.tz is None else d_btc_index.tz_convert(None)
         df_index = df_index.tz_localize(None) if df_index.tz is None else df_index.tz_convert(None)
 
         start = min(d_btc_index.min(), df_index.min()).date() - pd.Timedelta("1D")
-        end   = max(d_btc_index.max(), df_index.max()).date()
+        end = max(d_btc_index.max(), df_index.max()).date()
 
-        start_ts = int(pd.Timestamp(start).timestamp() * 1000)
-        end_ts   = int(pd.Timestamp(end).timestamp() * 1000)
+        url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS1MO"
+        rfr = pd.read_csv(url)
 
-        url = "https://www.deribit.com/api/v2/public/get_funding_rate_history"
-        records = []
-        cur_start = start_ts
-        step_ms = 30 * 24 * 3600 * 1000  # request in 30-day chunks, not open-ended
+        rfr["observation_date"] = pd.to_datetime(rfr["observation_date"])
+        rfr["DGS1MO"] = pd.to_numeric(rfr["DGS1MO"], errors="coerce")
 
-        with requests.Session() as session:
-            while cur_start < end_ts:
-                chunk_end = min(cur_start + step_ms, end_ts)  # <-- bounded window, not end_ts every time
+        rfr = rfr.set_index("observation_date")["DGS1MO"] / 100.0
 
-                params = {
-                    "instrument_name": "BTC-PERPETUAL",
-                    "start_timestamp": cur_start,
-                    "end_timestamp": chunk_end,
-                }
-                resp = session.get(url, params=params, timeout=30)
-                resp.raise_for_status()
-                result = resp.json().get("result", [])
+        # Treasury CMT is quoted on an investment basis;
+        # convert annual yield to continuously compounded rate.
+        rfr = 2 * np.log1p(rfr / 2)
 
-                if not result:
-                    cur_start = chunk_end + 1
-                    continue
+        rfr = (
+            rfr
+            .reindex(pd.date_range(start, end, freq="D"))
+            .ffill()
+            .dropna()
+        )
 
-                records.extend(result)
-                cur_start = max(result[-1]["timestamp"] + 1, chunk_end + 1)
-
-        fund = pd.DataFrame(records)
-        fund["date_time"] = pd.to_datetime(fund["timestamp"], unit="ms")
-        fund = fund.drop_duplicates(subset="date_time").set_index("date_time").sort_index()
-
-        fund["r_annual"] = fund["interest_1h"] * 24 * 365
-
-        rfr = fund["r_annual"].resample("1D").mean().dropna()
-        return rfr    
-        
+        return rfr
+            
     def run_all(self):
         rfr = self.get_rfr(self.d_btc.index, self.df.index)
         self.prepare_d_btc(rfr)
