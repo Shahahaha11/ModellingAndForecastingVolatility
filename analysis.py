@@ -62,7 +62,8 @@ for y in YEARS:
 # ==================================================================================================================
 YEARS = [2019, 2020, 2021]
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/x_by_year_all_interpol2/x_by_year.pkl", "rb") as f:
+# with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/x_by_year_all_interpol2/x_by_year.pkl", "rb") as f:
+with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/x_by_year_fut/x_by_year.pkl", "rb") as f:
     X_by_year = pd.read_pickle(f)
 
 # X_by_year[2021]["rt"] # CHECKING DELETE
@@ -157,7 +158,8 @@ for y in YEARS:
 # SAVE THIS OUTPUTS
 # import pickle
 # with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by_year_analysis_interpol2.pkl", "wb") as f:
-#     pickle.dump(outputs_by_year, f)
+with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by_year_analysis_fut.pkl", "wb") as f:
+    pickle.dump(outputs_by_year, f)
 # ==================================================================================================================
 
 # =============================================================================================================
@@ -189,7 +191,8 @@ d_btc_raw_by_year[2021]["rfr"]
 # ===========================================================================================================
 
 import pickle 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by_year/outputs_by_year_04_interpol2.pkl", "rb") as f:
+# with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by_year/outputs_by_year_04_interpol2.pkl", "rb") as f:
+with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by_year/outputs_by_year_analysis_fut.pkl", "rb") as f:
     outputs_by_year = pickle.load(f)
 
 
@@ -254,6 +257,14 @@ if RUN_BY == "year":
     PERIODS = YEARS
 else:
     PERIODS = [(y, q) for y in YEARS for q in QUARTERS]
+    
+
+# ======================= SPARSITY CHECK ============================================================================
+for y in YEARS:
+    print(y, "outputs:", outputs_by_year[y]["q1"].columns.tolist())
+    print(y, "trader_cache:", trader_cache[y].columns.tolist())
+    print(y, "missing:", [c for c in ["rv", "garch", "garch_mfiv", "garch_mfiv_avg", "regime_state", "selected_horizon"] + [f"MFIV_{h}" for h in range(2, 577)] if c not in trader_cache[y].columns])
+
 # ==================================================================================================================
 # ======================================= TESTING MAIN WITH CACHE  ==========================================================
 # ==================================================================================================================
@@ -261,7 +272,8 @@ else:
 from srcB.trader_testing import testing_execute_trading_strategy
 
 YEARS = [2019, 2020, 2021]
-MODELS = ["garch_n_mfiv", "garch"]
+# MODELS = ["garch_n_mfiv", "garch"]
+MODELS = ["garch", "garch_mfiv", "garch_n_mfiv", "garch_mfiv_avg", "regime_switching_mfiv"]
 
 RUN_BY = "year"    # "year" or "quarter"
 
@@ -299,8 +311,8 @@ for YEAR in YEARS:
                 hold_days=7,
                 lookback_hours=60,
                 mean_hours=60,
-                ql=0.20,
-                qh=0.70,
+                ql=0.10,
+                qh=0.90,
                 z=1.645
             )
 
@@ -339,14 +351,16 @@ print(pd.Series([x["action"] for x in market.transactions]).value_counts())
 #     pickle.dump(strategy_results, f)
 
 # LOAD BACK 
-# with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/data_strategy_results/strategy_results.pkl", "rb") as f:
-#     strategy_results = pickle.load(f)
+with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/data_strategy_results/strategy_results.pkl", "rb") as f:
+    strategy_results = pickle.load(f)
 
 # ==================================================================================================================
 # ============================================= PLOT EQUITY  ========================================================
 # ==================================================================================================================
 import matplotlib.pyplot as plt
-MODELS = ["garch_n_mfiv", "garch"]
+# MODELS = ["garch_n_mfiv", "garch"]
+MODELS = ["garch", "garch_mfiv", "garch_n_mfiv", "garch_mfiv_avg", "regime_switching_mfiv"]
+
 PLOT_YEAR = 2020
 plt.figure(figsize=(12, 6))
 for MODEL in MODELS:
@@ -385,9 +399,7 @@ for x in greek_tests[M:N]:
 # ========================================================================================================================================
 # ====================================================== STRATEGY DIAGNOSTICS ============================================================
 # ========================================================================================================================================
-import pandas as pd
-y = 2021
-the_model = "garch_n_mfiv"
+y = 2021 ; the_model = "garch_n_mfiv"
 # the_model = "garch_n_mfiv"
 position_side = "short_strangle"
 tx = pd.DataFrame(strategy_results[f"{the_model}_{str(y)[2:]}"]["transactions"]).sort_values("time")
