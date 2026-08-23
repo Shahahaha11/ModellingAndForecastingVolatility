@@ -154,12 +154,14 @@ for y in YEARS:
         y_true_by_year[y][q] = y_q.to_numpy()
 
         outputs_by_year[y][q] = pd.concat([outputs_by_year[y][q], pd.DataFrame({"regime_switching_mfiv": f_q, "regime_state": regime_q, "selected_horizon" : horizon_q})], axis = 1)
+
 # ==================================================================================================================
 # SAVE THIS OUTPUTS
 # import pickle
 # with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by_year_analysis_interpol2.pkl", "wb") as f:
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by_year_analysis_fut.pkl", "wb") as f:
-    pickle.dump(outputs_by_year, f)
+### saved: remove this line
+# with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by_year_analysis_fut.pkl", "wb") as f:
+#     pickle.dump(outputs_by_year, f)
 # ==================================================================================================================
 
 # =============================================================================================================
@@ -188,13 +190,23 @@ d_btc_raw_by_year[2021]["rfr"]
 
 # ===========================================================================================================
 # ==================================== OBJECTS YOU NEED BEFORE RUNNING BELOW ================================
+# ============= TEMPORARY ADD ON, MUST REMOVE, WITHOUT CHANGE, SAVE THE PREPARED OUTPUTS_BY_YEAR ============
 # ===========================================================================================================
-
+### temporary load 
+### this below one only has one extra thing. it has only 
 import pickle 
-# with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by_year/outputs_by_year_04_interpol2.pkl", "rb") as f:
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by_year/outputs_by_year_analysis_fut.pkl", "rb") as f:
+with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by_year_analysis_fut.pkl", "rb") as f:
+    outputs_by_year_fut = pickle.load(f)
+
+with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by_year/outputs_by_year_03.pkl", "rb") as f:
     outputs_by_year = pickle.load(f)
 
+# with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by_year/outputs_by_year_04_interpol2.pkl", "rb") as f:
+
+for y in YEARS:
+    for q in QUARTERS:
+        outputs_by_year[y][q] = pd.concat([outputs_by_year[y][q], outputs_by_year_fut[y][q][["selected_horizon", "regime_state", "regime_switching_mfiv"]]], axis = 1)
+### dump this prepared data set above carefully.
 
 # ==================================== BORROW MFIV COLS FROM XQ_BY_YEAR ================================
 # ===========================================================================================================
@@ -309,10 +321,10 @@ for YEAR in YEARS:
                 quantity=10,
                 expiry_days=30,
                 hold_days=7,
-                lookback_hours=60,
-                mean_hours=60,
-                ql=0.10,
-                qh=0.90,
+                lookback_hours=24,
+                mean_hours=12,
+                ql=0.20,
+                qh=0.80,
                 z=1.645
             )
 
@@ -355,13 +367,42 @@ with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/data_strategy
     strategy_results = pickle.load(f)
 
 # ==================================================================================================================
-# ============================================= PLOT EQUITY  ========================================================
+# ============================================= SHARPEE  ===========================================================
+# ==================================================================================================================
+YEARS = [2021]
+for y in YEARS:
+    history_key = f"{MODEL}_{str(YEAR)[2:]}"
+    print(strategy_results[history_key]["snapshots"])
+
+one_hist_key = f"{"garch_n_mfiv"}_21"
+print(strategy_results[one_hist_key]["snapshots"][-1])
+
+
+print(strategy_results.keys())
+# Is portfolio liquidated at the end of year 
+MODELS = ["garch", "garch_mfiv", "garch_n_mfiv", "garch_mfiv_avg", "regime_switching_mfiv"]
+rows = []
+for y in YEARS:
+    for model in MODELS:
+        if model.startswith("garch"):
+            history_key = f"{model}_{str(y)[2:]}"
+            rows.append({
+                "year" : y,
+                "model" : model,
+                "no_position" : "yes" if len(strategy_results[history_key]["snapshots"][-1]["positions"]) == 0 else "no"
+            })
+position_free = pd.DataFrame(rows)
+print(position_free)
+            
+
+# ==================================================================================================================
+# ============================================= PLOT EQUITY  =======================================================
 # ==================================================================================================================
 import matplotlib.pyplot as plt
 # MODELS = ["garch_n_mfiv", "garch"]
+# MODELS = ["garch", "garch_mfiv", "garch_n_mfiv", "garch_mfiv_avg", "regime_switching_mfiv"]
 MODELS = ["garch", "garch_mfiv", "garch_n_mfiv", "garch_mfiv_avg", "regime_switching_mfiv"]
-
-PLOT_YEAR = 2020
+PLOT_YEAR = 2021
 plt.figure(figsize=(12, 6))
 for MODEL in MODELS:
     plot_key = f"{MODEL}_{str(PLOT_YEAR)[2:]}"
@@ -399,7 +440,7 @@ for x in greek_tests[M:N]:
 # ========================================================================================================================================
 # ====================================================== STRATEGY DIAGNOSTICS ============================================================
 # ========================================================================================================================================
-y = 2021 ; the_model = "garch_n_mfiv"
+y = 2021 ; the_model = "garch_mfiv"
 # the_model = "garch_n_mfiv"
 position_side = "short_strangle"
 tx = pd.DataFrame(strategy_results[f"{the_model}_{str(y)[2:]}"]["transactions"]).sort_values("time")
@@ -453,63 +494,63 @@ print("Put legs loss:", (result["put_pnl"] < 0).sum())
 # ==================================================================================================================
 # ============================================= PLOTLY SPOT PLOT  ==================================================
 # ==================================================================================================================
-# import pandas as pd
-# import plotly.graph_objects as go
+import pandas as pd
+import plotly.graph_objects as go
 
-# y = 2021
-# price_df = d_btc_raw_by_year[y].copy()
-# price_df = price_df.loc[~price_df.index.duplicated(keep="first")].sort_index()
-# spot = pd.to_numeric(price_df["close"], errors="coerce")
-# for MODEL in MODELS:
-#     snapshots = strategy_results[f"{MODEL}_{str(y)[2:]}"]["snapshots"]
-#     fig = go.Figure()
-#     fig.add_trace(go.Scatter(x=spot.index, y=spot, mode="lines", name="Spot"))
+y = 2021
+price_df = d_btc_raw_by_year[y].copy()
+price_df = price_df.loc[~price_df.index.duplicated(keep="first")].sort_index()
+spot = pd.to_numeric(price_df["close"], errors="coerce")
+for MODEL in MODELS:
+    snapshots = strategy_results[f"{MODEL}_{str(y)[2:]}"]["snapshots"]
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=spot.index, y=spot, mode="lines", name="Spot"))
 
-#     previous_open = False
-#     entry_time = None
-#     entry_positions = []
+    previous_open = False
+    entry_time = None
+    entry_positions = []
 
-#     for snap in snapshots:
-#         now = pd.Timestamp(snap["time"]).floor("h")
-#         positions = snap.get("positions", [])
-#         currently_open = bool(positions)
+    for snap in snapshots:
+        now = pd.Timestamp(snap["time"]).floor("h")
+        positions = snap.get("positions", [])
+        currently_open = bool(positions)
 
-#         if currently_open and not previous_open:
-#             entry_time = now
-#             entry_positions = positions.copy()
+        if currently_open and not previous_open:
+            entry_time = now
+            entry_positions = positions.copy()
 
-#         if not currently_open and previous_open:
-#             exit_time = now
+        if not currently_open and previous_open:
+            exit_time = now
 
-#             for position in entry_positions:
-#                 strike = position["strike"]
+            for position in entry_positions:
+                strike = position["strike"]
 
-#                 fig.add_trace(go.Scatter(
-#                     x=[entry_time], y=[strike],
-#                     mode="markers",
-#                     marker={"size": 6},
-#                     showlegend=False
-#                 ))
+                fig.add_trace(go.Scatter(
+                    x=[entry_time], y=[strike],
+                    mode="markers",
+                    marker={"size": 6},
+                    showlegend=False
+                ))
 
-#                 fig.add_trace(go.Scatter(
-#                     x=[entry_time, exit_time],
-#                     y=[strike, strike],
-#                     mode="lines",
-#                     line={"dash": "dot"},
-#                     showlegend=False
-#                 ))
-#             entry_time = None
-#             entry_positions = []
-#         previous_open = currently_open
+                fig.add_trace(go.Scatter(
+                    x=[entry_time, exit_time],
+                    y=[strike, strike],
+                    mode="lines",
+                    line={"dash": "dot"},
+                    showlegend=False
+                ))
+            entry_time = None
+            entry_positions = []
+        previous_open = currently_open
 
-#     fig.update_layout(
-#         title=f"{MODEL} — {y}",
-#         xaxis_title="Time",
-#         yaxis_title="Spot / Strike",
-#         hovermode="closest"
-#     )
-#     fig.update_xaxes(rangeslider_visible=True)
-#     fig.show()
+    fig.update_layout(
+        title=f"{MODEL} — {y}",
+        xaxis_title="Time",
+        yaxis_title="Spot / Strike",
+        hovermode="closest"
+    )
+    fig.update_xaxes(rangeslider_visible=True)
+    fig.show()
 
 # ====================================================== ROUGH ============================================================
 x = strategy_results["garch_n_mfiv_21"]["transactions"]
