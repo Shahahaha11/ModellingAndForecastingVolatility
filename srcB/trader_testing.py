@@ -9,7 +9,8 @@ def testing_execute_trading_strategy(
     bt_year, bt_quarter, model, outputs_by_year, market, trader_cache,
     run_by="year",
     quantity=10, lookback_hours=60, mean_hours=60,
-    hold_days=7, expiry_days=30, ql=0.1, qh=0.9, z=1.645
+    hold_days=7, expiry_days=30, ql=0.1, qh=0.9, z=1.645,
+    risk_fraction=0.01
     ):
 
     if run_by == "year":
@@ -38,7 +39,8 @@ def testing_execute_trading_strategy(
     greek_tests = []
 
     # MFIV_HORIZONS = [191, 382, 573, 764]
-    MFIV_HORIZONS = list(range(2, 577))
+    # MFIV_HORIZONS = list(range(2, 577))
+    MFIV_HORIZONS = [12, 24, 72, 168, 336]
 
     VALID_MODELS = [
         "garch",
@@ -52,7 +54,20 @@ def testing_execute_trading_strategy(
         raise ValueError(f"model must be one of {VALID_MODELS}")
 
     rv = out_full["rv"].astype(float)
+    garch_strike_horizon = hold_days * 24
 
+    garch_historical_vol = np.sqrt(
+        rv.rolling(
+            window=garch_strike_horizon,
+            min_periods=garch_strike_horizon
+        ).sum().shift(1)
+    )
+    historical_vol = {}
+
+    for H in MFIV_HORIZONS:
+        historical_vol[H] = np.sqrt(
+            rv.rolling(window=H, min_periods=H).sum().shift(1)
+        )
     use_dynamic_hold = model == "garch_n_mfiv"
     use_dynamic_mfiv_signal = ( model == "regime_switching_mfiv" )
 
@@ -99,7 +114,7 @@ def testing_execute_trading_strategy(
             signal_h = (mfiv_h - trailing_rv_h) / trailing_rv_h
             forecast_mean_h = mfiv_h.rolling(window=H, min_periods=H).mean()
             q_lo_h = signal_h.rolling( window=H, min_periods=H).quantile(ql)
-            q_hi_h = signal_h.rolling(window=H, min_periods=H).quantile(qh) # 90th quantile for instance of the signal
+            q_hi_h = signal_h.rolling(window=H, min_periods=H).quantile(qh)
             forecast_top10_h = (forecast_mean_h.rolling(window=H,min_periods=H).quantile(qh))
             forecast_bot10_h = (forecast_mean_h.rolling(window=H, min_periods=H).quantile(ql))
             mask = (selected_horizon_series == col)
@@ -166,7 +181,9 @@ def testing_execute_trading_strategy(
                 instrument.Direction
             )
 
-            market.liquidate( key, instrument)
+            market.liquidate(key, instrument)
+
+        return len(market.holdings.instruments) == 0
 
     def save_snapshot(now):
         snapshots.append({
@@ -197,9 +214,20 @@ def testing_execute_trading_strategy(
     for idx, now in enumerate(now_list):
         market.update(now)
 
+        # ---------------------------------------------------------
+        # YEAR-END LIQUIDATION WINDOW
+        # ---------------------------------------------------------
+        if now >= pd.Timestamp(f"{bt_year + 1}-01-01", tz="UTC") - pd.Timedelta(days=7):
+            if liquidate_all():
+                reset_position_state()
+
+            market.record_equity()
+            save_snapshot(now)
+            continue
+
         if market.get_free_liquidity() < 0:
-            liquidate_all()
-            reset_position_state()
+            if liquidate_all():
+                reset_position_state()
 
             market.record_equity()
             save_snapshot(now)
@@ -239,7 +267,6 @@ def testing_execute_trading_strategy(
 
         long_puts_held = [instrument for instrument in holdings if ( instrument.Right == "P" and instrument.Direction == "buy" )]
 
-        # CHECKING FOR SHORT POSITION ONLY, COULD BE CLEANER BUT DOESNT MATTER FOR NOW.
         call_count = len(short_calls_held)
         put_count = len(short_puts_held)
 
@@ -264,7 +291,6 @@ def testing_execute_trading_strategy(
 
         active_position_side = position_side
         
-        # JUST CLASSIFY BASED ON BOOLEANS
         if active_position_side is None:
             if short_position and not long_position:
                 active_position_side = "short_strangle"
@@ -275,14 +301,14 @@ def testing_execute_trading_strategy(
         # INCOMPLETE POSITION EDGE CASE
         # ---------------------------------------------------------
         if (has_position and not complete_position):
-            liquidate_all()
-            reset_position_state()
+            if liquidate_all():
+                reset_position_state()
             market.record_equity()
             save_snapshot(now)
             continue
 
         # ---------------------------------------------------------
-        # EXIT : MECHANICALLY THIS CODE IS ONLY REACHED WHEN WE HAEV BOTH LEGS.
+        # EXIT
         # ---------------------------------------------------------
         if has_position:
             should_exit = False
@@ -294,18 +320,37 @@ def testing_execute_trading_strategy(
                 should_exit = True
 
             if (entered_day is not None and now.date() > entered_day):
-                if ( active_position_side == "long_straddle" and forecast_mean_now >= forecast_top10 ):
+                if (
+                    active_position_side == "long_straddle"
+                    and forecast_mean_now >= forecast_top10
+                ):
                     should_exit = True
 
-                elif ( active_position_side == "short_strangle" and forecast_mean_now <= forecast_bot10 ):
+                elif (
+                    active_position_side == "short_strangle"
+                    and model != "garch_n_mfiv"
+                    and forecast_mean_now <= forecast_bot10
+                ):
                     should_exit = True
+
+            if (
+                active_position_side == "short_strangle"
+                and model == "garch_n_mfiv"
+                and entry_lower_boundary is not None
+                and entry_upper_boundary is not None
+                and (
+                    market.spot <= entry_lower_boundary
+                    or market.spot >= entry_upper_boundary
+                )
+            ):
+                should_exit = True
 
             if any( instrument.Expiry - now <= pd.Timedelta(hours=12) for instrument in holdings ):
                 should_exit = True
 
             if should_exit:
-                liquidate_all()
-                reset_position_state()
+                if liquidate_all():
+                    reset_position_state()
 
                 market.record_equity()
                 save_snapshot(now)
@@ -316,8 +361,8 @@ def testing_execute_trading_strategy(
             save_snapshot(now)
             continue
 
-        long_entry_signal = ( s_now >= q_hi and 14 <= hour < 15 ) # high vol forecast -> long_vol
-        short_entry_signal = ( s_now <= q_lo and 11 <= hour < 15 ) # short vol forecast -> short_vol
+        long_entry_signal = ( s_now >= q_hi and 11 <= hour < 15 )
+        short_entry_signal = ( s_now <= q_lo and 11 <= hour < 15 )
 
         if not ( long_entry_signal or short_entry_signal):
             market.record_equity()
@@ -490,8 +535,8 @@ def testing_execute_trading_strategy(
                 }]
 
             else:
-                liquidate_all()
-                reset_position_state()
+                if liquidate_all():
+                    reset_position_state()
 
             market.record_equity()
             save_snapshot(now)
@@ -500,7 +545,43 @@ def testing_execute_trading_strategy(
         # ---------------------------------------------------------
         # STRIKE HORIZON 
         # ---------------------------------------------------------
-        if model in ["garch", "garch_mfiv_avg"]:
+        if model == "garch":
+            strike_horizon = None
+            mfiv_now = None
+
+            historical_vol_now = float(garch_historical_vol.loc[now])
+            garch_now = float(garch_series.loc[now])
+
+            if (
+                not np.isfinite(historical_vol_now)
+                or not np.isfinite(garch_now)
+                or garch_now <= 0
+            ):
+                market.record_equity()
+                save_snapshot(now)
+                continue
+
+            garch_forecast_vol = np.sqrt(
+                garch_now * garch_strike_horizon
+            )
+
+            spot_now = float(market.spot)
+
+            S_minus = spot_now * np.exp(
+                -z * historical_vol_now
+            )
+            S_plus = spot_now * np.exp(
+                z * historical_vol_now
+            )
+
+            lower_boundary = S_minus * np.exp(
+                -z * garch_forecast_vol
+            )
+            upper_boundary = S_plus * np.exp(
+                z * garch_forecast_vol
+            )
+
+        elif model == "garch_mfiv_avg":
             strike_horizon = None
             mfiv_now = None
 
@@ -547,18 +628,33 @@ def testing_execute_trading_strategy(
                 save_snapshot(now)
                 continue
 
-            # mfiv_now = float(out_full[mfiv_col].iloc[idx])
             mfiv_now = float(out_full.loc[now, mfiv_col])
 
             if not np.isfinite(mfiv_now) or mfiv_now <= 0:
                 market.record_equity()
                 save_snapshot(now)
                 continue
-            # ======================================================================================================
-            # ===================== STANDARD TESTING, SYMMETRIC STRIKES  ==================
-            # ======================================================================================================
-            lower_boundary = ( last * np.exp( -z * np.sqrt(mfiv_now) ))
-            upper_boundary = ( last * np.exp( z * np.sqrt(mfiv_now) ))
+
+            if model == "garch_n_mfiv":
+                historical_vol_now = float(historical_vol[strike_horizon].loc[now])
+
+                if not np.isfinite(historical_vol_now):
+                    market.record_equity()
+                    save_snapshot(now)
+                    continue
+
+                spot_now = float(market.spot)
+                S_minus = spot_now * np.exp(-z * historical_vol_now)
+                S_plus = spot_now * np.exp(z * historical_vol_now)
+
+                lower_boundary = S_minus * np.exp(-z * np.sqrt(mfiv_now))
+                upper_boundary = S_plus * np.exp(z * np.sqrt(mfiv_now))
+
+            else:
+                lower_boundary = last * np.exp(-z * np.sqrt(mfiv_now))
+                upper_boundary = last * np.exp(z * np.sqrt(mfiv_now))
+
+
         acceptable_calls = [
             instrument
             for instrument
@@ -599,7 +695,6 @@ def testing_execute_trading_strategy(
             key=lambda expiry_value: abs((expiry_value - now) - pd.Timedelta(days=expiry_days))
         )
 
-        # Prefer one common expiry for both legs.
         for expiry in common_expiries:
             expiry_calls = sorted(
                 [
@@ -622,8 +717,6 @@ def testing_execute_trading_strategy(
                 selected_puts = expiry_puts[:quantity]
                 break
 
-        # Fallback: allow different expiries only when
-        # no common-expiry range exists.
         if not selected_calls or not selected_puts:
             if acceptable_calls:
                 call_expiry = min(
@@ -659,14 +752,6 @@ def testing_execute_trading_strategy(
                     reverse=True
                 )[:quantity]
 
-        # # Never attempt only one side.
-        # if not selected_calls or not selected_puts:
-        #     market.record_equity()
-        #     save_snapshot(now)
-        #     continue 
-        
-        # CHANGED_050826
-        # Enforce the same number of call and put legs.
         pair_count = min(len(selected_calls), len(selected_puts), quantity)
 
         if pair_count == 0:
@@ -676,15 +761,104 @@ def testing_execute_trading_strategy(
 
         selected_calls = selected_calls[:pair_count]
         selected_puts = selected_puts[:pair_count]
-        
+        if model == "garch_n_mfiv":
+            spot_now = float(market.spot)
+            rfr_now = float(market.time_df.loc[now, "rfr"])
+
+            dS_lower = lower_boundary - spot_now
+            dS_upper = upper_boundary - spot_now
+
+            equity_now = market.cash + market.option_value()
+            risk_budget = risk_fraction * equity_now
+
+            total_delta = 0.0
+            total_gamma = 0.0
+
+            dynamic_quantity = 0
+
+            for q, (call, put) in enumerate(
+                zip(selected_calls, selected_puts),
+                start=1
+            ):
+
+                call_iv = float(
+                    market.current.loc[
+                        (market.current["instrument_name"] == call.Symbol)
+                        & (market.current["direction"] == call.Direction),
+                        "iv"
+                    ].iloc[0]
+                )
+
+                put_iv = float(
+                    market.current.loc[
+                        (market.current["instrument_name"] == put.Symbol)
+                        & (market.current["direction"] == put.Direction),
+                        "iv"
+                    ].iloc[0]
+                )
+
+                call_d1, _ = get_d1_d2(
+                    now, spot_now, call.Strike,
+                    rfr_now, call_iv, call.Expiry
+                )
+
+                put_d1, _ = get_d1_d2(
+                    now, spot_now, put.Strike,
+                    rfr_now, put_iv, put.Expiry
+                )
+
+                total_delta += (
+                    get_delta(call_d1, call.Right, call.Direction)
+                    + get_delta(put_d1, put.Right, put.Direction)
+                )
+
+                total_gamma += (
+                    get_gamma(
+                        call_d1, call.Right, now, spot_now,
+                        call_iv, call.Expiry, call.Direction
+                    )
+                    + get_gamma(
+                        put_d1, put.Right, now, spot_now,
+                        put_iv, put.Expiry, put.Direction
+                    )
+                )
+
+                pnl_lower = (
+                    total_delta * dS_lower
+                    + 0.5 * total_gamma * dS_lower ** 2
+                )
+
+                pnl_upper = (
+                    total_delta * dS_upper
+                    + 0.5 * total_gamma * dS_upper ** 2
+                )
+
+                stress_loss = max(
+                    0.0,
+                    -pnl_lower,
+                    -pnl_upper
+                )
+
+                if stress_loss > risk_budget:
+                    break
+
+                dynamic_quantity = q
+
+            if dynamic_quantity == 0:
+                market.record_equity()
+                save_snapshot(now)
+                continue
+
+            pair_count = dynamic_quantity
+
+            selected_calls = selected_calls[:pair_count]
+            selected_puts = selected_puts[:pair_count]
         before_call_count = call_count
         before_put_count = put_count
 
-        # Fill calls from closest above the upper boundary outward.
         for instrument in selected_calls:
             market.sell(instrument, qty=1)
 
-        # Fill puts from closest below the lower boundary outward.
         for instrument in selected_puts:
             market.sell( instrument, qty=1 )
 
@@ -711,12 +885,9 @@ def testing_execute_trading_strategy(
         calls_added = (call_count_after - before_call_count)
         puts_added = (put_count_after - before_put_count)
 
-        # Strict two-leg control:
-        # both sides must receive at least one fill.
-        if calls_added <= 0 or puts_added <= 0 or calls_added!= puts_added:
-            liquidate_all()
-            reset_position_state()
-
+        if calls_added <= 0 or puts_added <= 0 or calls_added != puts_added:
+            if liquidate_all():
+                reset_position_state()
             market.record_equity()
             save_snapshot(now)
             continue
@@ -729,9 +900,8 @@ def testing_execute_trading_strategy(
             selected_col = (selected_horizon_series.iloc[idx])
 
             if pd.isna(selected_col):
-                liquidate_all()
-                reset_position_state()
-
+                if liquidate_all():
+                    reset_position_state()
                 market.record_equity()
                 save_snapshot(now)
                 continue
@@ -745,16 +915,15 @@ def testing_execute_trading_strategy(
                 TypeError,
                 ValueError
             ):
-                liquidate_all()
-                reset_position_state()
-
+                if liquidate_all():
+                    reset_position_state()
                 market.record_equity()
                 save_snapshot(now)
                 continue
 
             if selected_H not in MFIV_HORIZONS:
-                liquidate_all()
-                reset_position_state()                
+                if liquidate_all():
+                    reset_position_state()
                 market.record_equity()
                 save_snapshot(now)
                 continue

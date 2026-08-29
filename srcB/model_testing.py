@@ -1,15 +1,15 @@
 import pandas as pd
 import numpy as np
+
 def regime_switching_mfiv(
     Xq_df,
-    MFIV_COLS=["MFIV_191", "MFIV_382", "MFIV_573", "MFIV_764"],
-    # horizons=[191, 382, 573, 764],
+    MFIV_COLS,
     return_col="rt",
     target_col="rv",
     refit_every=1,
-    min_improvement=0.02
+    min_improvement=0.02,
+    score_window=168
 ):
-    # MFIV_COLS = [f"MFIV_{x}" for x in horizons ]
     rv = Xq_df[target_col].astype(float)
     mfiv = Xq_df[list(MFIV_COLS)].astype(float)
 
@@ -18,20 +18,26 @@ def regime_switching_mfiv(
         for col in MFIV_COLS
     }
 
-    # For an MFIV forecast made at time t:
-    #
-    # matched_future_rv[col][t]
-    #     = rv[t+1] + ... + rv[t+H]
-    #
-    # This is used only for historical forecast evaluation.
     matched_future_rv = {}
+    trailing_rv = {}
 
     for col, H in horizons.items():
+
+        # Realised variance after forecast time t:
+        # rv[t+1] + ... + rv[t+H]
         matched_future_rv[col] = (
             rv.shift(-1)
               .rolling(window=H, min_periods=H)
               .sum()
               .shift(-(H - 1))
+        )
+
+        # Naive same-horizon benchmark known at time t:
+        # rv[t-H] + ... + rv[t-1]
+        trailing_rv[col] = (
+            rv.rolling(window=H, min_periods=H)
+              .sum()
+              .shift(1)
         )
 
     f_rollB = []
@@ -42,46 +48,70 @@ def regime_switching_mfiv(
 
     selected_col = None
 
-    # The longest horizon needs:
-    # H hours for each completed outcome
-    # plus H completed forecast-outcome observations.
-    start = 2 * max(horizons.values())
+    # Need enough history for:
+    # trailing H-hour RV,
+    # completed future H-hour RV,
+    # and score_window completed comparisons.
+    start = 2 * max(horizons.values()) + score_window
 
     for i in range(start, len(Xq_df)):
 
         if selected_col is None or (i - start) % refit_every == 0:
+
             losses = {}
 
             for col, H in horizons.items():
+
+                # Only forecasts whose full H-hour outcome
+                # is known before current time i.
                 history_end = i - H
 
-                forecast_history = mfiv[col].iloc[:history_end]
+                mfiv_history = mfiv[col].iloc[:history_end]
+                naive_history = trailing_rv[col].iloc[:history_end]
                 realised_history = matched_future_rv[col].iloc[:history_end]
 
                 valid = (
-                    forecast_history.notna()
+                    mfiv_history.notna()
+                    & naive_history.notna()
                     & realised_history.notna()
-                    & (forecast_history > 0)
+                    & (mfiv_history > 0)
+                    & (naive_history > 0)
                     & (realised_history > 0)
                 )
 
-                forecast_history = forecast_history.loc[valid].iloc[-H:]
-                realised_history = realised_history.loc[valid].iloc[-H:]
+                mfiv_history = mfiv_history.loc[valid].iloc[-score_window:]
+                naive_history = naive_history.loc[valid].iloc[-score_window:]
+                realised_history = realised_history.loc[valid].iloc[-score_window:]
 
-                if len(forecast_history) < H:
+                if len(mfiv_history) < score_window:
                     losses[col] = np.nan
                     continue
 
-                ratio = realised_history / forecast_history
+                mfiv_ratio = realised_history / mfiv_history
+                naive_ratio = realised_history / naive_history
 
-                # QLIKE divergence.
-                qlike = ratio - np.log(ratio) - 1
+                mfiv_qlike = (
+                    mfiv_ratio
+                    - np.log(mfiv_ratio)
+                    - 1
+                )
 
-                losses[col] = float(qlike.mean())
+                naive_qlike = (
+                    naive_ratio
+                    - np.log(naive_ratio)
+                    - 1
+                )
+
+                # Negative means MFIV beat trailing RV
+                # at this same horizon.
+                losses[col] = float(
+                    (mfiv_qlike - naive_qlike).mean()
+                )
 
             losses = pd.Series(losses, dtype=float).dropna()
 
             if not losses.empty:
+
                 best_col = losses.idxmin()
                 best_loss = losses.loc[best_col]
 
@@ -94,9 +124,7 @@ def regime_switching_mfiv(
                 else:
                     current_loss = losses.loc[selected_col]
 
-                    # Avoid switching because of a negligible
-                    # difference in historical loss.
-                    if best_loss < current_loss * (1 - min_improvement):
+                    if best_loss < current_loss - min_improvement:
                         selected_col = best_col
 
         if selected_col is None:
@@ -111,8 +139,6 @@ def regime_switching_mfiv(
 
         f_rollB.append(float(forecast))
 
-        # Future realised variance is used only as the evaluation target.
-        # It is not used when selecting the regime at time i.
         y_true.append(
             float(matched_outcome)
             if pd.notna(matched_outcome)
@@ -122,7 +148,7 @@ def regime_switching_mfiv(
         idx.append(i)
         regime_state.append(MFIV_COLS.index(selected_col))
         selected_horizon.append(selected_col)
-   
+
     return (
         np.asarray(f_rollB, dtype=float),
         np.asarray(y_true, dtype=float),
