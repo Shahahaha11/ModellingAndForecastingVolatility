@@ -47,6 +47,14 @@ def build_tcn_features(
             features[f"MFIV_{H2}"] / H2
             - features[f"MFIV_{H1}"] / H1
         )
+    positive_cols = [
+        "MFIV_12", "MFIV_24", "MFIV_72", "MFIV_168", "MFIV_336",
+        "garch",
+        "rv_past_12", "rv_past_24", "rv_past_72"
+    ]
+
+    for col in positive_cols:
+        features[col] = np.log(features[col].where(features[col] > 0))
 
     return features.replace([np.inf, -np.inf], np.nan)
 

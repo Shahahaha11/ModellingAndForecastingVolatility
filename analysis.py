@@ -36,7 +36,7 @@ sys.modules.pop("srcB", None)
 ### NOTE :
 # # COMES FROM MODELLING.ipynb
 import pickle 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by_year/outputs_by_year_03.pkl", "rb") as f:
+with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by_year/outputs_by_year_01.pkl", "rb") as f:
     outputs_by_year = pickle.load(f)
 
 
@@ -126,20 +126,21 @@ for y in YEARS:
 # # ======================================= PREPARE EMPTY DICTS =================================================
 # # =============================================================================================================
 
-# YEARS = [2019, 2020, 2021]
-# QUARTERS = ["q1", "q2", "q3", "q4"]
+YEARS = [2019, 2020, 2021]
+QUARTERS = ["q1", "q2", "q3", "q4"]
 
-# idx_by_year = {y : {} for y in YEARS}
-# f_rollB_by_year = {y: {} for y in YEARS}
-# rolling_forecasts =  {y: {} for y in YEARS}
-# rolling_residuals = {y: {} for y in YEARS}
-# y_pred_by_year = {y: {} for y in YEARS}
-# y_true_by_year = {y: {} for y in YEARS}
+idx_by_year = {y : {} for y in YEARS}
+f_rollB_by_year = {y: {} for y in YEARS}
+rolling_forecasts =  {y: {} for y in YEARS}
+rolling_residuals = {y: {} for y in YEARS}
+y_pred_by_year = {y: {} for y in YEARS}
+y_true_by_year = {y: {} for y in YEARS}
 
+# # =============================== FIND OPTIMAL PARAMETERS IN hyperparam_tuning.py ==================================
+with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/hyperparameters/tcn_best_params.pkl", "rb") as f:
+    best_tcn_params = pickle.load(f)
 
-
-# # ==================================================================================================================
-# # ======================================= YEARLY_TCN_ESTIMATION  ====================================================
+# # ======================================= YEARLY_TCN_ESTIMATION  ===================================================
 # # ==================================================================================================================
 sys.modules.pop("srcB.tcn_model", None)
 sys.modules.pop("srcB.tcn_model_v2", None)
@@ -154,13 +155,20 @@ for y in YEARS:
     X_df = pd.concat([Xq_by_year[y][q] for q in QUARTERS]).sort_index().copy()
     garch_df = pd.concat([outputs_by_year[y][q]["garch"] for q in QUARTERS]).sort_index()
     X_df["garch"] = garch_df.reindex(X_df.index)
+    # ======= the parameter tuning block should go right here , right ?===========
     tcn_output, tcn_bundle, tcn_targets = tcn_mfiv(
         X_df=X_df,
         option_df=df_raw_by_year[y],
         time_df=d_btc_raw_by_year[y],
         sequence_length=168,
         forward_hours=24,
-        delta_target=0.20
+        delta_target=0.20,
+        channels=best_tcn_params["channels"],
+        kernel_size=best_tcn_params["kernel_size"],
+        dropout=best_tcn_params["dropout"],
+        batch_size=best_tcn_params["batch_size"],
+        learning_rate=best_tcn_params["learning_rate"],
+        weight_decay=best_tcn_params["weight_decay"]
     )
     tcn_output_by_year[y] = tcn_output
     tcn_bundle_by_year[y] = tcn_bundle
@@ -170,7 +178,15 @@ for y in YEARS:
         q_index = Xq_by_year[y][q].index
         tcn_q = tcn_output.reindex(q_index)
         outputs_by_year[y][q] = pd.concat( [outputs_by_year[y][q], tcn_q], axis=1 )
-
+# tcn_q adds exactly the below columns to outputs_by_year, later saved as outputs_by_year_04
+# [
+#     "tcn_long_straddle",
+#     "tcn_short_straddle",
+#     "tcn_long_strangle",
+#     "tcn_short_strangle",
+#     "tcn_best_score",
+#     "tcn_action"
+# ]
 # =============================================================================================================
 # ======================================= SAVE TCN BUNDLES ====================================================
 # =============================================================================================================
@@ -182,90 +198,54 @@ with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/TCN/tcn_bu
 print("TCN bundles saved:", list(tcn_bundle_by_year.keys()))
 
 
-##==================================================================================================================
-##======================================= YEARLY_MFIV_GARCH_ESTIMATION  ============================================
-##==================================================================================================================
+#==================================================================================================================
+#======================================= YEARLY_MFIV_GARCH_ESTIMATION  ============================================
+#==================================================================================================================
 # YEARLY ESTIMATION
-# YEARS = [2019, 2020, 2021]
-# QUARTERS = ["q1", "q2", "q3", "q4"]
+YEARS = [2019, 2020, 2021]
+QUARTERS = ["q1", "q2", "q3", "q4"]
 
-# # THE_COLS = [f"MFIV_{h}" for h in range(2, 577)]
-# HORIZONS = [12, 24, 72, 168, 336]
-# THE_COLS = [f"MFIV_{h}" for h in HORIZONS]
+# THE_COLS = [f"MFIV_{h}" for h in range(2, 577)]
+HORIZONS = [12, 24, 72, 168, 336]
+THE_COLS = [f"MFIV_{h}" for h in HORIZONS]
 
-# for y in YEARS:
-#     X_df = pd.concat([Xq_by_year[y][q] for q in QUARTERS]).sort_index()
-#     f_rollB, y_true, idx, regime_state, selected_horizon = regime_switching_mfiv(
-#         X_df,
-#         THE_COLS,
-#         score_window=168
-#     )
-#     full_forecast = pd.Series(f_rollB, index=X_df.index[idx])
-#     full_true = pd.Series(y_true, index=X_df.index[idx])
-#     full_regime = pd.Series(regime_state, index=X_df.index[idx])
-#     full_horizon = pd.Series(selected_horizon, index=X_df.index[idx])
-#     for q in QUARTERS:
-#         q_index = Xq_by_year[y][q].index
-#         f_q = full_forecast.reindex(q_index).dropna()
-#         y_q = full_true.reindex(f_q.index)
-#         regime_q = full_regime.reindex(f_q.index)
-#         horizon_q = full_horizon.reindex(f_q.index)
-#         idx_q = Xq_by_year[y][q].index.get_indexer(f_q.index)
-#         idx_by_year[y][q] = idx_q
-#         f_rollB_by_year[y][q] = f_q.to_numpy()
-#         rolling_forecasts[y][q] = f_q.to_numpy()
-#         rolling_residuals[y][q] = (y_q - f_q).to_numpy()
-#         y_pred_by_year[y][q] = f_q.to_numpy()
-#         y_true_by_year[y][q] = y_q.to_numpy()
-#         outputs_by_year[y][q] = pd.concat([outputs_by_year[y][q], pd.DataFrame({"regime_switching_mfiv": f_q, "regime_state": regime_q, "selected_horizon" : horizon_q})], axis = 1)
+for y in YEARS:
+    X_df = pd.concat([Xq_by_year[y][q] for q in QUARTERS]).sort_index()
+    f_rollB, y_true, idx, regime_state, selected_horizon = regime_switching_mfiv(
+        X_df,
+        THE_COLS,
+        score_window=168
+    )
+    full_forecast = pd.Series(f_rollB, index=X_df.index[idx])
+    full_true = pd.Series(y_true, index=X_df.index[idx])
+    full_regime = pd.Series(regime_state, index=X_df.index[idx])
+    full_horizon = pd.Series(selected_horizon, index=X_df.index[idx])
+    for q in QUARTERS:
+        q_index = Xq_by_year[y][q].index
+        f_q = full_forecast.reindex(q_index).dropna()
+        y_q = full_true.reindex(f_q.index)
+        regime_q = full_regime.reindex(f_q.index)
+        horizon_q = full_horizon.reindex(f_q.index)
+        idx_q = Xq_by_year[y][q].index.get_indexer(f_q.index)
+        idx_by_year[y][q] = idx_q
+        f_rollB_by_year[y][q] = f_q.to_numpy()
+        rolling_forecasts[y][q] = f_q.to_numpy()
+        rolling_residuals[y][q] = (y_q - f_q).to_numpy()
+        y_pred_by_year[y][q] = f_q.to_numpy()
+        y_true_by_year[y][q] = y_q.to_numpy()
+        outputs_by_year[y][q] = pd.concat([outputs_by_year[y][q], pd.DataFrame({"regime_switching_mfiv": f_q, "regime_state": regime_q, "selected_horizon" : horizon_q})], axis = 1)
 
+# outputs_by_year[2021]["q1"].columns
 # ==================================================================================================================
 # SAVE THIS OUTPUTS
-# with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by_year_analysis_fut.pkl", "wb") as f:
-#     pickle.dump(outputs_by_year, f)
+with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by_year/outputs_by_year_04.pkl", "wb") as f:
+    pickle.dump(outputs_by_year, f)
 # ==================================================================================================================
 
 # ===========================================================================================================
 # ==================================== OBJECTS YOU NEED BEFORE RUNNING BELOW ================================
 # ============= TEMPORARY ADD ON, MUST REMOVE, WITHOUT CHANGE, SAVE THE PREPARED OUTPUTS_BY_YEAR ============
 # ===========================================================================================================
-### temporary load 
-### this below one only has one extra thing. it has only 
-# import pickle 
-# with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by_year_analysis_fut.pkl", "rb") as f:
-#     outputs_by_year_fut = pickle.load(f)
-
-# # with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by_year/outputs_by_year_03.pkl", "rb") as f:
-# #     outputs_by_year_03 = pickle.load(f)
-
-# ### dump this prepared data set above CAREFULLY LATER
-# for y in YEARS:
-#     for q in QUARTERS:
-#         outputs_by_year[y][q] = pd.concat(
-#             [
-#                 outputs_by_year[y][q],
-#                 outputs_by_year_fut[y][q][
-#                     ["selected_horizon", "regime_state", "regime_switching_mfiv"]
-#                 ]
-#             ],
-#             axis=1
-#         )
-# ### REMOVE DUPLICATES FRM THAT CONCAT
-# for y in YEARS:
-#     for q in QUARTERS:
-#         outputs_by_year[y][q] = outputs_by_year[y][q].loc[
-#             :, ~outputs_by_year[y][q].columns.duplicated(keep="last")
-#         ]
-
-#################################### FINAL_READY_OUTPUTS_BY_YEAR AS 04 ####################################
-# import pickle
-# with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by_year/outputs_by_year_04.pkl", "wb") as f:
-#     pickle.dump(outputs_by_year, f)
-
-
-
-
-
 
 
 
@@ -344,9 +324,8 @@ else:
     PERIODS = [(y, q) for y in YEARS for q in QUARTERS]
     
 
-
 # ==================================================================================================================
- # ======================================= TESTING_MAIN_WITH_CACHE  ==========================================================
+# ======================================= TESTING_MAIN_WITH_CACHE  ==========================================================
 # ==================================================================================================================
 # sys.modules.pop("srcB", None)
 
@@ -356,7 +335,6 @@ YEARS = [2019, 2020, 2021]
 MODELS = [
     "garch",
     "garch_n_mfiv",
-    "garch_mfiv_avg",
     "tcn_mfiv"
 ]
 RUN_BY = "year"
@@ -420,14 +398,14 @@ print("outputs:", "tcn_action" in outputs_by_year[2019]["q1"].columns)
 print("cache:", "tcn_action" in trader_cache[2019].columns)
 [c for c in trader_cache[2019].columns if c.startswith("tcn")]
 
-## ==================================================================================================================
-## ============================================= SAVE DICT  ========================================================
-## ==================================================================================================================
-# import sys, os
-# os.makedirs("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/data_strategy_results", exist_ok = True)
-# import pickle 
-# with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/data_strategy_results/strategy_results.pkl", "wb") as f:
-#     pickle.dump(strategy_results, f)
+# ==================================================================================================================
+# ============================================= SAVE DICT  ========================================================
+# ==================================================================================================================
+import sys, os
+os.makedirs("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/data_strategy_results", exist_ok = True)
+import pickle 
+with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/data_strategy_results/strategy_results.pkl", "wb") as f:
+    pickle.dump(strategy_results, f)
 
 # # LOAD BACK 
 # with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/data_strategy_results/strategy_results.pkl", "rb") as f:
@@ -440,7 +418,6 @@ YEARS = [2019, 2020, 2021]
 MODELS = [
     "garch",
     "garch_n_mfiv",
-    "garch_mfiv_avg",
     "tcn_mfiv"
 ]
 rows = []
@@ -464,7 +441,7 @@ print(sharpe_table)
 
 
 # Is portfolio liquidated at the end of year YES
-MODELS = ["garch", "garch_mfiv", "garch_n_mfiv", "garch_mfiv_avg", "regime_switching_mfiv"]
+MODELS = ["garch", "garch_n_mfiv", "regime_switching_mfiv"]
 rows = []
 for y in YEARS:
     for model in MODELS:
@@ -487,7 +464,6 @@ import matplotlib.pyplot as plt
 MODELS = [
     "garch",
     "garch_n_mfiv",
-    "garch_mfiv_avg",
     "tcn_mfiv"
 ]
 PLOT_YEAR = 2019
@@ -504,7 +480,7 @@ plt.legend()
 plt.show()
 
 # ==================================================================================================================
-# ============================================= PLOT DELTA  ========================================================
+# ============================================= PLOT DELTA (skip)  ========================================================
 # ==================================================================================================================
 import matplotlib.pyplot as plt
 PLOT_YEAR = 2020
@@ -525,59 +501,59 @@ for x in greek_tests[M:N]:
     ax.legend()
     plt.show()
 
-# ========================================================================================================================================
-# ====================================================== STRATEGY DIAGNOSTICS ============================================================
-# ========================================================================================================================================
-y = 2021 ; the_model = "garch_n_mfiv"
-# the_model = "garch_n_mfiv"
-position_side = "short_strangle"
-tx = pd.DataFrame(strategy_results[f"{the_model}_{str(y)[2:]}"]["transactions"]).sort_values("time")
-open_actions = {"buy_to_open", "sell_to_open"}
-close_actions = {"buy_to_close", "sell_to_close", "liquidate", "expiry_settlement"}
-trades = []
-open_pos = {}
-for _, r in tx.iterrows():
-    sym = r["symbol"]
-    if r["action"] in open_actions:
-        open_pos[sym] = {
-            "entry_time": r["time"],
-            "right": r["right"],
-            "direction": r["held_direction"],
-            "pnl": float(r["cash_change"])
-        }
-    elif r["action"] in close_actions and sym in open_pos:
-        open_pos[sym]["pnl"] += float(r["cash_change"])
-        open_pos[sym]["exit_time"] = r["time"]
-        trades.append({"symbol": sym, **open_pos.pop(sym)})
-legs = pd.DataFrame(trades)
-groups = []
-for entry_time, g in legs.groupby("entry_time"):
-    side = "short_strangle" if (g["direction"] == "sell").all() else "long_straddle"
-    if side != position_side:
-        continue
-    call_pnl = g.loc[g["right"] == "C", "pnl"].sum()
-    put_pnl = g.loc[g["right"] == "P", "pnl"].sum()
-    groups.append({
-        "entry": entry_time,
-        "exit": g["exit_time"].max(),
-        "side": side,
-        "call_pnl": call_pnl,
-        "put_pnl": put_pnl,
-        "total_pnl": call_pnl + put_pnl,
-        "call_result": "PROFIT" if call_pnl > 0 else "LOSS",
-        "put_result": "PROFIT" if put_pnl > 0 else "LOSS" if put_pnl < 0 else "FLAT",
-        "position_result": "PROFIT" if call_pnl + put_pnl > 0 else "LOSS"
-    })
-result = pd.DataFrame(groups)
+# # ========================================================================================================================================
+# # ====================================================== STRATEGY DIAGNOSTICS ============================================================
+# # ========================================================================================================================================
+# y = 2021 ; the_model = "garch_n_mfiv"
+# # the_model = "garch_n_mfiv"
+# position_side = "short_strangle"
+# tx = pd.DataFrame(strategy_results[f"{the_model}_{str(y)[2:]}"]["transactions"]).sort_values("time")
+# open_actions = {"buy_to_open", "sell_to_open"}
+# close_actions = {"buy_to_close", "sell_to_close", "liquidate", "expiry_settlement"}
+# trades = []
+# open_pos = {}
+# for _, r in tx.iterrows():
+#     sym = r["symbol"]
+#     if r["action"] in open_actions:
+#         open_pos[sym] = {
+#             "entry_time": r["time"],
+#             "right": r["right"],
+#             "direction": r["held_direction"],
+#             "pnl": float(r["cash_change"])
+#         }
+#     elif r["action"] in close_actions and sym in open_pos:
+#         open_pos[sym]["pnl"] += float(r["cash_change"])
+#         open_pos[sym]["exit_time"] = r["time"]
+#         trades.append({"symbol": sym, **open_pos.pop(sym)})
+# legs = pd.DataFrame(trades)
+# groups = []
+# for entry_time, g in legs.groupby("entry_time"):
+#     side = "short_strangle" if (g["direction"] == "sell").all() else "long_straddle"
+#     if side != position_side:
+#         continue
+#     call_pnl = g.loc[g["right"] == "C", "pnl"].sum()
+#     put_pnl = g.loc[g["right"] == "P", "pnl"].sum()
+#     groups.append({
+#         "entry": entry_time,
+#         "exit": g["exit_time"].max(),
+#         "side": side,
+#         "call_pnl": call_pnl,
+#         "put_pnl": put_pnl,
+#         "total_pnl": call_pnl + put_pnl,
+#         "call_result": "PROFIT" if call_pnl > 0 else "LOSS",
+#         "put_result": "PROFIT" if put_pnl > 0 else "LOSS" if put_pnl < 0 else "FLAT",
+#         "position_result": "PROFIT" if call_pnl + put_pnl > 0 else "LOSS"
+#     })
+# result = pd.DataFrame(groups)
 
-print(result.to_string(index=False))
-print("\nPositions:", len(result))
-print("Profitable positions:", (result["total_pnl"] > 0).sum())
-print("Losing positions:", (result["total_pnl"] < 0).sum())
-print("Call legs profit:", (result["call_pnl"] > 0).sum())
-print("Call legs loss:", (result["call_pnl"] < 0).sum())
-print("Put legs profit:", (result["put_pnl"] > 0).sum())
-print("Put legs loss:", (result["put_pnl"] < 0).sum())
+# print(result.to_string(index=False))
+# print("\nPositions:", len(result))
+# print("Profitable positions:", (result["total_pnl"] > 0).sum())
+# print("Losing positions:", (result["total_pnl"] < 0).sum())
+# print("Call legs profit:", (result["call_pnl"] > 0).sum())
+# print("Call legs loss:", (result["call_pnl"] < 0).sum())
+# print("Put legs profit:", (result["put_pnl"] > 0).sum())
+# print("Put legs loss:", (result["put_pnl"] < 0).sum())
 
 # ========================================================================================================================================
 # ========================================== ALL STRATEGY DIAGNOSTICS  ===================================================================
@@ -655,8 +631,8 @@ print(summary.to_string(index=False))
 # ========================================================================================================================================
 # ========================================== TCN SPECIFIC (TRADER DIAGNOSTICS)============================================
 # ========================================================================================================================================
+# This block reconstructs the actual executed TCN option positions from the trader transaction log and summarizes how each TCN strategy type performed.
 MODEL = "tcn_mfiv"
-
 all_trades = []
 for y in YEARS:
     tx = pd.DataFrame(strategy_results[f"{MODEL}_{str(y)[2:]}"]["transactions"]).sort_values("time")
@@ -1036,6 +1012,46 @@ threshold_trader_check = pd.DataFrame(rows)
 
 print(threshold_trader_check.to_string(index=False))
 
+
+# ==================================================================================================================
+# ======================================= NOTE =====================================================================
+# ==================================================================================================================
+# below is a copy of output from TCN_SCORE_THRESHOLD_TRADER_CALIBRATION and we have a clear in sample optimal parameter
+# The actual sequential trader confirms that score filtering can improve performance,
+# but "importantly" the relationship is not monotonic once trader path dependence enters. Earlier it seemed monotonic.
+# The most important finding is 0.003. It improves Sharpe versus baseline in every year,
+# turns 2020 positive, and still retains 112, 125, and 223 executed trades. 
+# That is much more statistically credible than 0.0117, where 2019 and 2020 have only 19 and 17 trades.
+
+# threshold  year  trades    sharpe
+#     0.0000  2019     206  0.007511
+#     0.0000  2020     238 -0.020190
+#     0.0000  2021     250  0.897632
+#     0.0030  2019     112  0.390607
+#     0.0030  2020     125  0.042897
+#     0.0030  2021     223  1.332264
+#     0.0074  2019      33  0.257431
+#     0.0074  2020      37 -0.342683
+#     0.0074  2021     147  1.610950
+#     0.0090  2019      26  0.660726
+#     0.0090  2020      31 -0.234558
+#     0.0090  2021     111  1.461598
+#     0.0117  2019      19  0.419985
+#     0.0117  2020      17  0.249815
+#     0.0117  2021      73  1.472884
+
+# FINAL SELECTION : tcn_score_threshold = 0.003
+
+# ==================================================================================================================
+# ======================================= OTHER NOTE ===============================================================
+# ==================================================================================================================
+# For garch family models : signal is the relative spread between a forecast and trailing rv.
+# For regime_switching_mfiv : signal is the spread between MFIV horizon H and rv over that same horizon.
+# Entry Logic : fires long when signal is in the top decile of its own rolling distribution. (s_now ≥ q_hi). opposite for short
+# So when forecast is unusually far below realized, it goes short vol(strangle).
+# That is "trade the direction the model expects variance to move" strategy. buy vol expansion, sell vol contraction.
+# Rather than the classic "sell rick implied vol, dont care about direction"
+
 # ============================================= POST ESTIMATION ====================================================
 # ============================================= PLOTLY SPOT PLOT  ==================================================
 # ==================================================================================================================
@@ -1096,43 +1112,3 @@ for MODEL in MODELS_PLOTLY:
     )
     fig.update_xaxes(rangeslider_visible=True)
     fig.show()
-
-# ==================================================================================================================
-# ======================================= NOTE =====================================================================
-# ==================================================================================================================
-# below is a copy of output from TCN_SCORE_THRESHOLD_TRADER_CALIBRATION and we have a clear in sample optimal parameter
-# The actual sequential trader confirms that score filtering can improve performance,
-# but "importantly" the relationship is not monotonic once trader path dependence enters. Earlier it seemed monotonic.
-# The most important finding is 0.003. It improves Sharpe versus baseline in every year,
-# turns 2020 positive, and still retains 112, 125, and 223 executed trades. 
-# That is much more statistically credible than 0.0117, where 2019 and 2020 have only 19 and 17 trades.
-
-# threshold  year  trades    sharpe
-#     0.0000  2019     206  0.007511
-#     0.0000  2020     238 -0.020190
-#     0.0000  2021     250  0.897632
-#     0.0030  2019     112  0.390607
-#     0.0030  2020     125  0.042897
-#     0.0030  2021     223  1.332264
-#     0.0074  2019      33  0.257431
-#     0.0074  2020      37 -0.342683
-#     0.0074  2021     147  1.610950
-#     0.0090  2019      26  0.660726
-#     0.0090  2020      31 -0.234558
-#     0.0090  2021     111  1.461598
-#     0.0117  2019      19  0.419985
-#     0.0117  2020      17  0.249815
-#     0.0117  2021      73  1.472884
-
-# FINAL SELECTION : tcn_score_threshold = 0.003
-
-# ==================================================================================================================
-# ======================================= OTHER NOTE ===============================================================
-# ==================================================================================================================
-# For garch family models : signal is the relative spread between a forecast and trailing rv.
-# For regime_switching_mfiv : signal is the spread between MFIV horizon H and rv over that same horizon.
-# Entry Logic : fires long when signal is in the top decile of its own rolling distribution. (s_now ≥ q_hi). opposite for short
-# So when forecast is unusually far below realized, it goes short vol(strangle).
-# That is "trade the direction the model expects variance to move" strategy. buy vol expansion, sell vol contraction.
-# Rather than the classic "sell rick implied vol, dont care about direction"
-

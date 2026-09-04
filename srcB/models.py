@@ -19,18 +19,17 @@ def estimate_naive10(Xq):
 
     return np.array(f_rollB), np.array(y_true), np.array(idx)
 
-
-def estimate_garch(Xq, lookback = 10):
+def estimate_garch(Xq, lookback = 122):
     f_rollB, y_true, idx = [], [], []
     Xn = Xq.to_numpy(dtype=float)
 
     for i in range(lookback, len(Xn)):
-        r_sub = Xn[i-lookback:i, 0]
+        r_sub = Xn[i-lookback:i, 0] * 100
 
-        am = arch_model(r_sub, mean="Constant", vol="GARCH", p=1, q=1, rescale=False)
+        am = arch_model(r_sub, mean="Zero", vol="GARCH", p=1, q=1, rescale=False)
         res = am.fit(disp="off", show_warning=False)
 
-        f_next = res.forecast(horizon=1).variance.values[-1, 0]
+        f_next = res.forecast(horizon=1).variance.values[-1, 0] / 10000
 
         f_rollB.append(f_next)
         y_true.append(Xn[i, 0] ** 2)

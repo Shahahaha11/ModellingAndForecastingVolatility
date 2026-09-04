@@ -54,7 +54,6 @@ for y in YEARS:
 
 
 YEARS = [2019, 2020, 2021, 2022]
-
 with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/x_by_year_fut/x_by_year.pkl", "rb") as f:
     X_by_year = pd.read_pickle(f)
 with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/OOS/x_by_year_fut/x_by_year.pkl", "rb") as f:
@@ -70,8 +69,8 @@ YEARS = CALIBRATION_YEARS + [VALIDATION_YEAR]
 
 X_by_year[VALIDATION_YEAR] = X_by_year_OOS[VALIDATION_YEAR]
 outputs_by_year[VALIDATION_YEAR] = outputs_by_year_OOS[VALIDATION_YEAR]
-# ======================================= CONTINUE =====================================================
 
+# ======================================= CONTINUE =====================================================
 for y in YEARS:
     X_by_year[y] = X_by_year[y].copy()
     X_by_year[y]["rv"] = X_by_year[y]["rt"] ** 2
@@ -96,7 +95,6 @@ for y in YEARS:
     for q in QUARTERS:
         for H in MFIVS:
             Xq_by_year[y][q][f"MFIV_{H}"] *= (H / 8760.0)
-
 
 for y in YEARS:
     for q in QUARTERS:
