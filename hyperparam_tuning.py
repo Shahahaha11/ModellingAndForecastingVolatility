@@ -1,9 +1,11 @@
 # ================= CURRENT FOLD LOGIC =================
 
-# 40% train -> 24h purge -> next 20%
-# (the training set is slightly less than 40% because removes the final 24 hours before validation)
-# 60% train -> 24h purge -> next 20%
-# 80% train -> 24h purge -> final 20%
+# 40% train -> exact target-end purge -> next 20%
+# 60% train -> exact target-end purge -> next 20%
+# 80% train -> exact target-end purge -> final 20%
+#
+# A training observation is retained only if every realized option target
+# used for that observation is fully resolved before validation begins.
 
 # =============================================================================================================
 # ======================================= HYPERPARAMETER TUNING ===============================================
@@ -23,6 +25,7 @@ import optuna
 sys.path.insert(0, "/Users/shah/CODE_BOOK_4/THESIS_WORKING/THESIS_2")
 sys.path.insert(0, "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/MFIV_calibration")
 os.chdir("/Users/shah/CODE_BOOK_4/THESIS_WORKING/THESIS_2")
+
 
 # =============================================================================================================
 # ======================================= COMMON PARAMETERS ===================================================
@@ -66,15 +69,20 @@ RFR_PATH = (
     "data/IS/ready_data/d_btc_by_year_all.pkl"
 )
 
+HYPERPARAM_DIR = (
+    "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/"
+    "data/IS/hyperparameters"
+)
+
 
 # =============================================================================================================
-# ======================================= TCN IMPORTS =========================================================
+# ======================================= COMMON FEATURE / TARGET IMPORTS =====================================
 # =============================================================================================================
 
-sys.modules.pop("srcB.tcn_model_v2", None)
+sys.modules.pop("srcB.tcn_model_mfiv", None)
 
-from srcB.tcn_model_v2 import (
-    build_tcn_features,
+from srcB.tcn_model_mfiv import (
+    build_tcn_features as build_common_features,
     build_forward_targets as build_common_targets,
     make_training_sequences as make_common_sequences,
     SmallCausalTCN,
@@ -131,17 +139,16 @@ def load_is_data():
         df_raw_by_year,
     )
 
+
 # =============================================================================================================
 # ======================================= PREPARE ONE MODEL YEAR ==============================================
 # =============================================================================================================
-
 def prepare_model_year(
     year,
     X_by_year,
     outputs_by_year,
     d_btc_raw_by_year,
     df_raw_by_year,
-    build_features,
 ):
 
     X_df = X_by_year[year].copy().sort_index()
@@ -151,13 +158,14 @@ def prepare_model_year(
     for H in [12, 24, 72, 168, 336]:
         X_df[f"MFIV_{H}"] *= H / 8760.0
 
-    garch = pd.concat(
-        [outputs_by_year[year][q]["garch"] for q in QUARTERS]
-    ).sort_index()
+    garch = pd.concat([
+        outputs_by_year[year][q]["garch"]
+        for q in QUARTERS
+    ]).sort_index()
 
     X_df["garch"] = garch.reindex(X_df.index)
 
-    features = build_features(X_df)
+    features = build_common_features(X_df)
 
     targets = build_common_targets(
         option_df=df_raw_by_year[year],
@@ -173,10 +181,20 @@ def prepare_model_year(
         sequence_length=SEQUENCE_LENGTH,
     )
 
+    exit_cols = [
+        "long_straddle_exit_time",
+        "short_straddle_exit_time",
+        "long_strangle_exit_time",
+        "short_strangle_exit_time",
+    ]
+
+    target_end = (targets.loc[idx, exit_cols].max(axis=1).reindex(idx))
+
     return {
         "X": X,
         "y": y,
         "idx": idx,
+        "target_end": target_end,
         "n_features": features.shape[1],
     }
 
@@ -189,7 +207,6 @@ def prepare_model_data(
     outputs_by_year,
     d_btc_raw_by_year,
     df_raw_by_year,
-    build_features,
     model_name,
 ):
 
@@ -205,12 +222,13 @@ def prepare_model_data(
             outputs_by_year=outputs_by_year,
             d_btc_raw_by_year=d_btc_raw_by_year,
             df_raw_by_year=df_raw_by_year,
-            build_features=build_features,
         )
 
         print("Sequences:", len(model_data[y]["idx"]))
+        print("Features:", model_data[y]["n_features"])
 
     return model_data
+
 
 # =============================================================================================================
 # ======================================= ROLLING CHRONOLOGICAL FOLD ==========================================
@@ -221,16 +239,14 @@ def make_rolling_fold(data, train_fraction):
     X = data["X"]
     y = data["y"]
     idx = data["idx"]
+    target_end = data["target_end"]
 
     val_start_i = int(len(idx) * train_fraction)
     val_end_i = int(len(idx) * (train_fraction + VAL_FRACTION))
 
     val_start = idx[val_start_i]
 
-    train_mask = (
-        idx
-        < val_start - pd.Timedelta(hours=FORWARD_HOURS)
-    )
+    train_mask = (target_end < val_start).to_numpy()
 
     if val_end_i < len(idx):
 
@@ -299,7 +315,19 @@ def fit_model_fold(
         patience=PATIENCE,
     )
 
-    return history["val_loss"].min()
+    return history["val_loss"].min(), int(best_epoch)
+
+
+# =============================================================================================================
+# ======================================= LOAD DATA ONCE ======================================================
+# =============================================================================================================
+
+(
+    X_by_year,
+    outputs_by_year,
+    d_btc_raw_by_year,
+    df_raw_by_year,
+) = load_is_data()
 
 
 # =============================================================================================================
@@ -387,6 +415,7 @@ def evaluate_tcn_trial(trial, tcn_data):
         raise optuna.TrialPruned()
 
     all_losses = []
+    epochs_by_year = {y: [] for y in YEARS}
 
     resources = [1, 2, 4]
 
@@ -400,8 +429,10 @@ def evaluate_tcn_trial(trial, tcn_data):
                 tcn_data[y],
                 train_fraction
             )
+
             np.random.seed(SEED)
             torch.manual_seed(SEED)
+
             model = SmallCausalTCN(
                 n_features=tcn_data[y]["n_features"],
                 channels=params["channels"],
@@ -409,7 +440,7 @@ def evaluate_tcn_trial(trial, tcn_data):
                 dropout=params["dropout"],
             )
 
-            val_mse = fit_model_fold(
+            val_mse, best_epoch = fit_model_fold(
                 fold=fold,
                 model=model,
                 params=params,
@@ -418,7 +449,9 @@ def evaluate_tcn_trial(trial, tcn_data):
                 device=get_tcn_device(),
                 seed=SEED,
             )
+
             round_losses.append(val_mse)
+            epochs_by_year[y].append(best_epoch)
 
         all_losses.extend(round_losses)
 
@@ -431,6 +464,14 @@ def evaluate_tcn_trial(trial, tcn_data):
 
         if trial.should_prune():
             raise optuna.TrialPruned()
+
+    trial.set_user_attr(
+        "epochs_by_year",
+        {
+            str(y): int(np.median(epochs_by_year[y]))
+            for y in YEARS
+        },
+    )
 
     return mean_val_mse
 
@@ -469,23 +510,14 @@ def tune_tcn(tcn_data):
 
 
 # =============================================================================================================
-# ======================================= MAIN ================================================================
+# ======================================= TCN MAIN ============================================================
 # =============================================================================================================
-
-
-(
-    X_by_year,
-    outputs_by_year,
-    d_btc_raw_by_year,
-    df_raw_by_year,
-) = load_is_data()
 
 tcn_data = prepare_model_data(
     X_by_year=X_by_year,
     outputs_by_year=outputs_by_year,
     d_btc_raw_by_year=d_btc_raw_by_year,
     df_raw_by_year=df_raw_by_year,
-    build_features=build_tcn_features,
     model_name="TCN",
 )
 
@@ -505,13 +537,19 @@ best_tcn_params["channels"] = (
 
 print("\nTCN CHANNELS")
 print(best_tcn_params["channels"])
-    
+
+best_tcn_params["epochs_by_year"] = {
+    int(y): int(epoch)
+    for y, epoch in tcn_study.best_trial.user_attrs["epochs_by_year"].items()
+}
+
+print("\nTCN EPOCHS BY YEAR")
+print(best_tcn_params["epochs_by_year"])
+
 
 # =============================================================================================================
 # ======================================= SAVE TCN HPO RESULTS ================================================
 # =============================================================================================================
-    
-HYPERPARAM_DIR = "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/hyperparameters"
 
 os.makedirs(HYPERPARAM_DIR, exist_ok=True)
 
@@ -521,35 +559,14 @@ with open(f"{HYPERPARAM_DIR}/tcn_study.pkl", "wb") as f:
 with open(f"{HYPERPARAM_DIR}/tcn_best_params.pkl", "wb") as f:
     pickle.dump(best_tcn_params, f)
 
-# # ======================================= CHECK ================================================
-# print(type(tcn_study))
-
-# print("\nSTUDY NAME")
-# print(tcn_study.study_name)
-
-# print("\nNUMBER OF TRIALS")
-# print(len(tcn_study.trials))
-
-# print("\nBEST VALUE")
-# print(tcn_study.best_value)
-
-# print("\nBEST PARAMS")
-# print(tcn_study.best_params)
-
-# print("\nBEST TRIAL")
-# print(tcn_study.best_trial)
-
-# print("\nALL TRIALS")
-# print(tcn_study.trials_dataframe())
 
 # =============================================================================================================
 # ======================================= GRU IMPORTS =========================================================
 # =============================================================================================================
 
-sys.modules.pop("srcB.gru_model", None)
+sys.modules.pop("srcB.gru_model_mfiv", None)
 
-from srcB.gru_model import (
-    build_gru_features,
+from srcB.gru_model_mfiv import (
     SmallGRU,
     _scalers as gru_scalers,
     _train as train_gru,
@@ -574,6 +591,7 @@ def suggest_gru_params(trial):
         "num_layers",
         [1, 2, 3, 4, 6]
     )
+
     if num_layers == 1:
         dropout = 0.0
     else:
@@ -581,6 +599,7 @@ def suggest_gru_params(trial):
             "dropout",
             [0.0, 0.10, 0.20, 0.30]
         )
+
     learning_rate = trial.suggest_float(
         "learning_rate",
         1e-4,
@@ -606,8 +625,8 @@ def suggest_gru_params(trial):
         "weight_decay": weight_decay,
         "batch_size": batch_size,
     }
-    
-    
+
+
 # =============================================================================================================
 # ======================================= EVALUATE ONE GRU TRIAL ==============================================
 # =============================================================================================================
@@ -617,6 +636,7 @@ def evaluate_gru_trial(trial, gru_data):
     params = suggest_gru_params(trial)
 
     all_losses = []
+    epochs_by_year = {y: [] for y in YEARS}
 
     resources = [1, 2, 4]
 
@@ -641,7 +661,7 @@ def evaluate_gru_trial(trial, gru_data):
                 dropout=params["dropout"],
             )
 
-            val_mse = fit_model_fold(
+            val_mse, best_epoch = fit_model_fold(
                 fold=fold,
                 model=model,
                 params=params,
@@ -652,6 +672,7 @@ def evaluate_gru_trial(trial, gru_data):
             )
 
             round_losses.append(val_mse)
+            epochs_by_year[y].append(best_epoch)
 
         all_losses.extend(round_losses)
 
@@ -665,8 +686,15 @@ def evaluate_gru_trial(trial, gru_data):
         if trial.should_prune():
             raise optuna.TrialPruned()
 
-    return mean_val_mse
+    trial.set_user_attr(
+        "epochs_by_year",
+        {
+            str(y): int(np.median(epochs_by_year[y]))
+            for y in YEARS
+        },
+    )
 
+    return mean_val_mse
 
 
 # =============================================================================================================
@@ -701,23 +729,16 @@ def tune_gru(gru_data):
 
     return study
 
+
 # =============================================================================================================
 # ======================================= GRU MAIN ============================================================
 # =============================================================================================================
-
-(
-    X_by_year,
-    outputs_by_year,
-    d_btc_raw_by_year,
-    df_raw_by_year,
-) = load_is_data()
 
 gru_data = prepare_model_data(
     X_by_year=X_by_year,
     outputs_by_year=outputs_by_year,
     d_btc_raw_by_year=d_btc_raw_by_year,
     df_raw_by_year=df_raw_by_year,
-    build_features=build_gru_features,
     model_name="GRU",
 )
 
@@ -730,18 +751,22 @@ print("\nBEST GRU PARAMETERS")
 print(gru_study.best_params)
 
 best_gru_params = gru_study.best_params.copy()
+
 if best_gru_params["num_layers"] == 1:
     best_gru_params["dropout"] = 0.0
 
+best_gru_params["epochs_by_year"] = {
+    int(y): int(epoch)
+    for y, epoch in gru_study.best_trial.user_attrs["epochs_by_year"].items()
+}
+
+print("\nGRU EPOCHS BY YEAR")
+print(best_gru_params["epochs_by_year"])
 
 
 # =============================================================================================================
 # ======================================= SAVE GRU HPO RESULTS ================================================
 # =============================================================================================================
-
-HYPERPARAM_DIR = "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/hyperparameters"
-
-os.makedirs(HYPERPARAM_DIR, exist_ok=True)
 
 with open(f"{HYPERPARAM_DIR}/gru_study.pkl", "wb") as f:
     pickle.dump(gru_study, f)
@@ -749,22 +774,14 @@ with open(f"{HYPERPARAM_DIR}/gru_study.pkl", "wb") as f:
 with open(f"{HYPERPARAM_DIR}/gru_best_params.pkl", "wb") as f:
     pickle.dump(best_gru_params, f)
 
-## This preserves exactly the same HPO methodology as TCN:
-# same 2019–2021 data
-# same 3 rolling chronological folds
-# same 24h purge
-# same standardized validation MSE objective
-# same ASHA scheme
-# same LR / WD / batch search space
 
 # =============================================================================================================
 # ======================================= TSM IMPORTS =========================================================
 # =============================================================================================================
 
-sys.modules.pop("srcB.tsm_model", None)
+sys.modules.pop("srcB.tsm_model_mfiv", None)
 
-from srcB.tsm_model import (
-    build_tsm_features,
+from srcB.tsm_model_mfiv import (
     SmallTSMixer,
     _scalers as tsm_scalers,
     _train as train_tsm,
@@ -772,6 +789,7 @@ from srcB.tsm_model import (
 )
 
 TSM_SEED = 42
+
 
 # =============================================================================================================
 # ======================================= TSM SEARCH SPACE ====================================================
@@ -820,6 +838,7 @@ def suggest_tsm_params(trial):
         "batch_size": batch_size,
     }
 
+
 # =============================================================================================================
 # ======================================= EVALUATE ONE TSM TRIAL ==============================================
 # =============================================================================================================
@@ -829,6 +848,7 @@ def evaluate_tsm_trial(trial, tsm_data):
     params = suggest_tsm_params(trial)
 
     all_losses = []
+    epochs_by_year = {y: [] for y in YEARS}
 
     resources = [1, 2, 4]
 
@@ -854,7 +874,7 @@ def evaluate_tsm_trial(trial, tsm_data):
                 dropout=params["dropout"],
             )
 
-            val_mse = fit_model_fold(
+            val_mse, best_epoch = fit_model_fold(
                 fold=fold,
                 model=model,
                 params=params,
@@ -865,6 +885,7 @@ def evaluate_tsm_trial(trial, tsm_data):
             )
 
             round_losses.append(val_mse)
+            epochs_by_year[y].append(best_epoch)
 
         all_losses.extend(round_losses)
 
@@ -877,6 +898,14 @@ def evaluate_tsm_trial(trial, tsm_data):
 
         if trial.should_prune():
             raise optuna.TrialPruned()
+
+    trial.set_user_attr(
+        "epochs_by_year",
+        {
+            str(y): int(np.median(epochs_by_year[y]))
+            for y in YEARS
+        },
+    )
 
     return mean_val_mse
 
@@ -918,19 +947,11 @@ def tune_tsm(tsm_data):
 # ======================================= TSM MAIN ============================================================
 # =============================================================================================================
 
-(
-    X_by_year,
-    outputs_by_year,
-    d_btc_raw_by_year,
-    df_raw_by_year,
-) = load_is_data()
-
 tsm_data = prepare_model_data(
     X_by_year=X_by_year,
     outputs_by_year=outputs_by_year,
     d_btc_raw_by_year=d_btc_raw_by_year,
     df_raw_by_year=df_raw_by_year,
-    build_features=build_tsm_features,
     model_name="TSM",
 )
 
@@ -944,30 +965,32 @@ print(tsm_study.best_params)
 
 best_tsm_params = tsm_study.best_params.copy()
 
+best_tsm_params["epochs_by_year"] = {
+    int(y): int(epoch)
+    for y, epoch in tsm_study.best_trial.user_attrs["epochs_by_year"].items()
+}
+
+print("\nTSM EPOCHS BY YEAR")
+print(best_tsm_params["epochs_by_year"])
+
 
 # =============================================================================================================
 # ======================================= SAVE TSM HPO RESULTS ================================================
 # =============================================================================================================
-
-HYPERPARAM_DIR = "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/hyperparameters"
-
-os.makedirs(HYPERPARAM_DIR, exist_ok=True)
 
 with open(f"{HYPERPARAM_DIR}/tsm_study.pkl", "wb") as f:
     pickle.dump(tsm_study, f)
 
 with open(f"{HYPERPARAM_DIR}/tsm_best_params.pkl", "wb") as f:
     pickle.dump(best_tsm_params, f)
-    
 
 # =============================================================================================================
 # ======================================= ITRANSFORMER IMPORTS =================================================
 # =============================================================================================================
 
-sys.modules.pop("srcB.itr_model", None)
+sys.modules.pop("srcB.itr_model_mfiv", None)
 
-from srcB.itr_model import (
-    build_itr_features,
+from srcB.itr_model_mfiv import (
     SmallITransformer,
     _scalers as itr_scalers,
     _train as train_itr,
@@ -985,17 +1008,17 @@ def suggest_itr_params(trial):
 
     d_model = trial.suggest_categorical(
         "d_model",
-        [32, 64, 128]
+        [32, 64]
     )
 
     n_heads = trial.suggest_categorical(
         "n_heads",
-        [2, 4, 8]
+        [2, 4]
     )
 
     e_layers = trial.suggest_categorical(
         "e_layers",
-        [1, 2, 3]
+        [1, 2]
     )
 
     d_ff_ratio = trial.suggest_categorical(
@@ -1005,13 +1028,13 @@ def suggest_itr_params(trial):
 
     dropout = trial.suggest_categorical(
         "dropout",
-        [0.0, 0.10, 0.20]
+        [0.0, 0.10]
     )
 
     learning_rate = trial.suggest_float(
         "learning_rate",
         1e-4,
-        3e-3,
+        1e-3,
         log=True
     )
 
@@ -1038,7 +1061,6 @@ def suggest_itr_params(trial):
         "weight_decay": weight_decay,
         "batch_size": batch_size,
     }
-    
 
 # =============================================================================================================
 # ======================================= EVALUATE ONE ITRANSFORMER TRIAL =====================================
@@ -1049,6 +1071,7 @@ def evaluate_itr_trial(trial, itr_data):
     params = suggest_itr_params(trial)
 
     all_losses = []
+    epochs_by_year = {y: [] for y in YEARS}
 
     resources = [1, 2, 4]
 
@@ -1076,7 +1099,7 @@ def evaluate_itr_trial(trial, itr_data):
                 dropout=params["dropout"],
             )
 
-            val_mse = fit_model_fold(
+            val_mse, best_epoch = fit_model_fold(
                 fold=fold,
                 model=model,
                 params=params,
@@ -1087,6 +1110,7 @@ def evaluate_itr_trial(trial, itr_data):
             )
 
             round_losses.append(val_mse)
+            epochs_by_year[y].append(best_epoch)
 
         all_losses.extend(round_losses)
 
@@ -1099,6 +1123,14 @@ def evaluate_itr_trial(trial, itr_data):
 
         if trial.should_prune():
             raise optuna.TrialPruned()
+
+    trial.set_user_attr(
+        "epochs_by_year",
+        {
+            str(y): int(np.median(epochs_by_year[y]))
+            for y in YEARS
+        },
+    )
 
     return mean_val_mse
 
@@ -1140,19 +1172,11 @@ def tune_itr(itr_data):
 # ======================================= ITRANSFORMER MAIN ===================================================
 # =============================================================================================================
 
-(
-    X_by_year,
-    outputs_by_year,
-    d_btc_raw_by_year,
-    df_raw_by_year,
-) = load_is_data()
-
 itr_data = prepare_model_data(
     X_by_year=X_by_year,
     outputs_by_year=outputs_by_year,
     d_btc_raw_by_year=d_btc_raw_by_year,
     df_raw_by_year=df_raw_by_year,
-    build_features=build_itr_features,
     model_name="ITRANSFORMER",
 )
 
@@ -1174,30 +1198,33 @@ best_itr_params["d_ff"] = (
 print("\nITR D_FF")
 print(best_itr_params["d_ff"])
 
+best_itr_params["epochs_by_year"] = {
+    int(y): int(epoch)
+    for y, epoch in itr_study.best_trial.user_attrs["epochs_by_year"].items()
+}
+
+print("\nITR EPOCHS BY YEAR")
+print(best_itr_params["epochs_by_year"])
+
 
 # =============================================================================================================
 # ======================================= SAVE ITRANSFORMER HPO RESULTS =======================================
 # =============================================================================================================
-
-HYPERPARAM_DIR = "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/hyperparameters"
-
-os.makedirs(HYPERPARAM_DIR, exist_ok=True)
 
 with open(f"{HYPERPARAM_DIR}/itr_study.pkl", "wb") as f:
     pickle.dump(itr_study, f)
 
 with open(f"{HYPERPARAM_DIR}/itr_best_params.pkl", "wb") as f:
     pickle.dump(best_itr_params, f)
-    
+
 
 # =============================================================================================================
 # ======================================= DLINEAR IMPORTS =====================================================
 # =============================================================================================================
 
-sys.modules.pop("srcB.dl_model", None)
+sys.modules.pop("srcB.dl_model_mfiv", None)
 
-from srcB.dl_model import (
-    build_dl_features,
+from srcB.dl_model_mfiv import (
     SmallDLinear,
     _scalers as dl_scalers,
     _train as train_dl,
@@ -1205,6 +1232,7 @@ from srcB.dl_model import (
 )
 
 DL_SEED = 42
+
 
 # =============================================================================================================
 # ======================================= DLINEAR SEARCH SPACE ================================================
@@ -1246,8 +1274,8 @@ def suggest_dl_params(trial):
         "weight_decay": weight_decay,
         "batch_size": batch_size,
     }
-    
-    
+
+
 # =============================================================================================================
 # ======================================= EVALUATE ONE DLINEAR TRIAL ==========================================
 # =============================================================================================================
@@ -1257,6 +1285,7 @@ def evaluate_dl_trial(trial, dl_data):
     params = suggest_dl_params(trial)
 
     all_losses = []
+    epochs_by_year = {y: [] for y in YEARS}
 
     resources = [1, 2, 4]
 
@@ -1281,7 +1310,7 @@ def evaluate_dl_trial(trial, dl_data):
                 individual=params["individual"],
             )
 
-            val_mse = fit_model_fold(
+            val_mse, best_epoch = fit_model_fold(
                 fold=fold,
                 model=model,
                 params=params,
@@ -1292,6 +1321,7 @@ def evaluate_dl_trial(trial, dl_data):
             )
 
             round_losses.append(val_mse)
+            epochs_by_year[y].append(best_epoch)
 
         all_losses.extend(round_losses)
 
@@ -1304,6 +1334,14 @@ def evaluate_dl_trial(trial, dl_data):
 
         if trial.should_prune():
             raise optuna.TrialPruned()
+
+    trial.set_user_attr(
+        "epochs_by_year",
+        {
+            str(y): int(np.median(epochs_by_year[y]))
+            for y in YEARS
+        },
+    )
 
     return mean_val_mse
 
@@ -1345,19 +1383,11 @@ def tune_dl(dl_data):
 # ======================================= DLINEAR MAIN ========================================================
 # =============================================================================================================
 
-(
-    X_by_year,
-    outputs_by_year,
-    d_btc_raw_by_year,
-    df_raw_by_year,
-) = load_is_data()
-
 dl_data = prepare_model_data(
     X_by_year=X_by_year,
     outputs_by_year=outputs_by_year,
     d_btc_raw_by_year=d_btc_raw_by_year,
     df_raw_by_year=df_raw_by_year,
-    build_features=build_dl_features,
     model_name="DLINEAR",
 )
 
@@ -1371,28 +1401,21 @@ print(dl_study.best_params)
 
 best_dl_params = dl_study.best_params.copy()
 
+best_dl_params["epochs_by_year"] = {
+    int(y): int(epoch)
+    for y, epoch in dl_study.best_trial.user_attrs["epochs_by_year"].items()
+}
+
+print("\nDLINEAR EPOCHS BY YEAR")
+print(best_dl_params["epochs_by_year"])
 
 
 # =============================================================================================================
 # ======================================= SAVE DLINEAR HPO RESULTS ============================================
 # =============================================================================================================
 
-HYPERPARAM_DIR = "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/hyperparameters"
-
-os.makedirs(HYPERPARAM_DIR, exist_ok=True)
-
 with open(f"{HYPERPARAM_DIR}/dl_study.pkl", "wb") as f:
     pickle.dump(dl_study, f)
 
 with open(f"{HYPERPARAM_DIR}/dl_best_params.pkl", "wb") as f:
     pickle.dump(best_dl_params, f)
-
-
-# architecture:
-# moving_avg
-# individual
-
-# optimization:
-# learning_rate
-# weight_decay
-# batch_size``

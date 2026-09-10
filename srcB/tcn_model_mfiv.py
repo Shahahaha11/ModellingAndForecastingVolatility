@@ -38,26 +38,34 @@ def build_tcn_features(
     features["rt"] = X_df["rt"].astype(float)
 
     rv = X_df["rv"].astype(float)
+
     for H in rv_horizons:
         features[f"rv_past_{H}"] = rv.rolling(H, min_periods=H).sum().shift(1)
 
-    # MFIV_H is cumulative H-hour variance, so compare the curve in variance-per-hour units.
+    # MFIV_H is cumulative H-hour variance, so compare the curve
+    # in variance-per-hour units.
     for H1, H2 in zip(mfiv_horizons[:-1], mfiv_horizons[1:]):
         features[f"mfiv_slope_{H1}_{H2}"] = (
             features[f"MFIV_{H2}"] / H2
             - features[f"MFIV_{H1}"] / H1
         )
+
     positive_cols = [
-        "MFIV_12", "MFIV_24", "MFIV_72", "MFIV_168", "MFIV_336",
+        "MFIV_12",
+        "MFIV_24",
+        "MFIV_72",
+        "MFIV_168",
+        "MFIV_336",
         "garch",
-        "rv_past_12", "rv_past_24", "rv_past_72"
+        "rv_past_12",
+        "rv_past_24",
+        "rv_past_72",
     ]
 
     for col in positive_cols:
         features[col] = np.log(features[col].where(features[col] > 0))
 
     return features.replace([np.inf, -np.inf], np.nan)
-
 
 # ==================================================================================================
 # 24-HOUR COUNTERFACTUAL OPTION TARGETS
@@ -670,10 +678,7 @@ def _train(
 def fit_tcn(
     X,
     y,
-    idx,
     n_features,
-    val_fraction=0.20,
-    purge_hours=24,
     channels=(16, 16, 16, 16, 16, 16),
     kernel_size=3,
     dropout=0.10,
@@ -681,28 +686,16 @@ def fit_tcn(
     batch_size=128,
     learning_rate=1e-3,
     weight_decay=1e-4,
-    patience=6,
     seed=42,
     device=None,
 ):
     np.random.seed(seed)
     torch.manual_seed(seed)
 
-    split = int(len(idx) * (1 - val_fraction))
-    val_start = idx[split]
+    x_mean, x_std, y_mean, y_std = _scalers(X, y)
 
-    train_mask = idx < val_start - pd.Timedelta(hours=purge_hours)
-    val_mask = idx >= val_start
-
-    X_train, y_train = X[train_mask], y[train_mask]
-    X_val, y_val = X[val_mask], y[val_mask]
-
-    x_mean, x_std, y_mean, y_std = _scalers(X_train, y_train)
-
-    X_train = ((X_train - x_mean) / x_std).astype(np.float32)
-    X_val = ((X_val - x_mean) / x_std).astype(np.float32)
-    y_train = ((y_train - y_mean) / y_std).astype(np.float32)
-    y_val = ((y_val - y_mean) / y_std).astype(np.float32)
+    X = ((X - x_mean) / x_std).astype(np.float32)
+    y = ((y - y_mean) / y_std).astype(np.float32)
 
     run_device = _get_device(device)
 
@@ -713,42 +706,12 @@ def fit_tcn(
         dropout=dropout,
     )
 
-    model, best_epoch, history = _train(
+    model, _, history = _train(
         model,
-        X_train,
-        y_train,
+        X,
+        y,
         run_device,
-        epochs,
-        batch_size,
-        learning_rate,
-        weight_decay,
-        X_val=X_val,
-        y_val=y_val,
-        patience=patience,
-    )
-
-    # The chronological validation block chooses the epoch count.
-    # Refit once on all supplied IS observations with that fixed epoch count.
-    x_mean, x_std, y_mean, y_std = _scalers(X, y)
-    X_full = ((X - x_mean) / x_std).astype(np.float32)
-    y_full = ((y - y_mean) / y_std).astype(np.float32)
-
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-
-    model = SmallCausalTCN(
-        n_features=n_features,
-        channels=channels,
-        kernel_size=kernel_size,
-        dropout=dropout,
-    )
-
-    model, _, _ = _train(
-        model,
-        X_full,
-        y_full,
-        run_device,
-        max(best_epoch, 1),
+        int(epochs),
         batch_size,
         learning_rate,
         weight_decay,
@@ -761,11 +724,9 @@ def fit_tcn(
         "x_std": x_std,
         "y_mean": y_mean,
         "y_std": y_std,
-        "best_epoch": int(best_epoch),
-        "val_start": val_start,
+        "fit_epochs": int(epochs),
         "history": history,
     }
-
 
 def predict_tcn(bundle, X_df):
     features = build_tcn_features(X_df)[bundle["feature_cols"]]
@@ -812,7 +773,6 @@ def tcn_mfiv(
     sequence_length=168,
     forward_hours=24,
     delta_target=0.20,
-    val_fraction=0.20,
     channels=(16, 16, 16, 16, 16, 16),
     kernel_size=3,
     dropout=0.10,
@@ -820,7 +780,6 @@ def tcn_mfiv(
     batch_size=128,
     learning_rate=1e-3,
     weight_decay=1e-4,
-    patience=6,
     seed=42,
     device=None,
 ):
@@ -834,19 +793,16 @@ def tcn_mfiv(
         delta_target=delta_target,
     )
 
-    X, y, idx = make_training_sequences(
+    X, y, _ = make_training_sequences(
         features,
         targets,
         sequence_length=sequence_length,
     )
-
+    
     bundle = fit_tcn(
         X=X,
         y=y,
-        idx=idx,
         n_features=features.shape[1],
-        val_fraction=val_fraction,
-        purge_hours=forward_hours,
         channels=channels,
         kernel_size=kernel_size,
         dropout=dropout,
@@ -854,11 +810,9 @@ def tcn_mfiv(
         batch_size=batch_size,
         learning_rate=learning_rate,
         weight_decay=weight_decay,
-        patience=patience,
         seed=seed,
         device=device,
     )
-
     bundle["feature_cols"] = list(features.columns)
     bundle["sequence_length"] = sequence_length
     bundle["forward_hours"] = forward_hours

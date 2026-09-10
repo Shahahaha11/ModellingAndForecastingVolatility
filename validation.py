@@ -130,7 +130,7 @@ d_btc_raw_by_year[2021]["rfr"]
 # ==================================================================================================================
 
 sys.modules.pop("srcB.tcn_model_v2", None)
-from srcB.tcn_model_v2 import predict_tcn, build_tcn_features
+from srcB.tcn_model_mfiv import predict_tcn, build_tcn_features
 
 import pickle
 with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/tcn/tcn_bundle_by_year.pkl", "rb") as f:
@@ -212,7 +212,7 @@ tcn_validation_output = tcn_validation_output[
 ].copy()
 
 ## ============================= TEMP CHECK =============================
-from srcB.tcn_model_v2 import predict_tcn, build_tcn_features
+from srcB.tcn_model_mfiv import predict_tcn, build_tcn_features
 print(tcn_validation_output[["tcn_action", "tcn_best_score"]].head())
 print(tcn_validation_output["tcn_action"].value_counts())
 ## ========== are features complete ?

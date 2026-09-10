@@ -125,7 +125,7 @@ sys.modules.pop("srcB.tsm_model", None)
 sys.modules.pop("srcB.dl_model", None)
 sys.modules.pop("srcB.itr_model", None)
 
-from srcB.tcn_model_v2 import predict_tcn
+from srcB.tcn_model_mfiv import predict_tcn
 from srcB.gru_model import predict_gru
 from srcB.tsm_model import predict_tsm
 from srcB.dl_model import predict_dl

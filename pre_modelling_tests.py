@@ -515,7 +515,7 @@ print(garch_extremes.to_string())
 # =============================================================================================================
 
 from pathlib import Path
-from srcB.tcn_model_v2 import build_forward_targets, make_training_sequences, TARGET_COLS
+from srcB.tcn_model_mfiv import build_forward_targets, make_training_sequences, TARGET_COLS
 
 
 DATA_DIR = Path("../data/rawData")
