@@ -156,7 +156,7 @@ with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/hyperparam
     best_dl_params = pickle.load(f)
 
 SEED = 42
-
+FORWARD_HOURS = 96
 
 # =============================================================================================================
 # ======================================= YEARLY_DL_ESTIMATION ===============================================
@@ -187,7 +187,7 @@ for y in YEARS:
         option_df=df_raw_by_year[y],
         time_df=d_btc_raw_by_year[y],
         sequence_length=168,
-        forward_hours=24,
+        forward_hours=FORWARD_HOURS,
         delta_target=0.20,
         moving_avg=best_dl_params["moving_avg"],
         individual=best_dl_params["individual"],
@@ -323,8 +323,8 @@ else:
 # ======================================= TESTING_MAIN_WITH_CACHE =============================================
 # =============================================================================================================
 
-sys.modules.pop("srcB.trader_testing_tcn", None)
-from srcB.trader_testing_tcn import testing_execute_trading_strategy
+sys.modules.pop("srcB.trader_testing_tcn_v1", None)
+from srcB.trader_testing_tcn_v1 import testing_execute_trading_strategy
 
 MODEL = "dl"
 RUN_BY = "year"
@@ -364,7 +364,8 @@ for YEAR in YEARS:
             mean_hours=12,
             ql=0.10,
             qh=0.90,
-            z=1.645
+            z=1.645,
+            forward_hours=FORWARD_HOURS,
         )
 
         greek_tests.extend(greek_tests_q)
@@ -465,87 +466,6 @@ plt.title(f"Equity curve — {PLOT_YEAR}")
 plt.grid(alpha=0.3)
 plt.legend()
 plt.show()
-
-
-# =============================================================================================================
-# ======================================= DL SPECIFIC (TRADER DIAGNOSTICS) ==================================
-# =============================================================================================================
-# Reconstruct the actual executed DL option positions from the trader transaction log.
-
-MODEL = "dl"
-all_trades = []
-
-for y in YEARS:
-    tx = pd.DataFrame(
-        strategy_results[f"{MODEL}_{str(y)[2:]}"]["transactions"]
-    ).sort_values("time")
-
-    open_actions = {"buy_to_open", "sell_to_open"}
-    close_actions = {"buy_to_close", "sell_to_close", "liquidate", "expiry_settlement"}
-
-    trades = []
-    open_pos = {}
-
-    for _, r in tx.iterrows():
-        sym = r["symbol"]
-
-        if r["action"] in open_actions:
-            open_pos[sym] = {
-                "entry_time": r["time"],
-                "right": r["right"],
-                "strike": r["strike"],
-                "direction": r["held_direction"],
-                "pnl": float(r["cash_change"])
-            }
-
-        elif r["action"] in close_actions and sym in open_pos:
-            open_pos[sym]["pnl"] += float(r["cash_change"])
-            open_pos[sym]["exit_time"] = r["time"]
-            trades.append({
-                "symbol": sym,
-                **open_pos.pop(sym)
-            })
-
-    legs = pd.DataFrame(trades)
-
-    for entry_time, g in legs.groupby("entry_time"):
-        direction = "short" if (g["direction"] == "sell").all() else "long"
-        structure = "straddle" if g["strike"].nunique() == 1 else "strangle"
-        side = f"{direction}_{structure}"
-
-        call_pnl = g.loc[g["right"] == "C", "pnl"].sum()
-        put_pnl = g.loc[g["right"] == "P", "pnl"].sum()
-        total_pnl = call_pnl + put_pnl
-
-        all_trades.append({
-            "year": y,
-            "entry": entry_time,
-            "exit": g["exit_time"].max(),
-            "side": side,
-            "call_pnl": call_pnl,
-            "put_pnl": put_pnl,
-            "total_pnl": total_pnl,
-            "position_result": "PROFIT" if total_pnl > 0 else "LOSS"
-        })
-
-dl_trades = pd.DataFrame(all_trades)
-print(dl_trades.to_string(index=False))
-
-summary = (
-    dl_trades.groupby(["year", "side"])
-    .agg(
-        positions=("total_pnl", "size"),
-        profitable=("total_pnl", lambda x: (x > 0).sum()),
-        losing=("total_pnl", lambda x: (x < 0).sum()),
-        total_pnl=("total_pnl", "sum"),
-        avg_pnl=("total_pnl", "mean")
-    )
-    .reset_index()
-)
-
-print("\nSUMMARY")
-print(summary.to_string(index=False))
-
 
 # =============================================================================================================
 # ======================================= PHASE 2: DIAGNOSTICS FOR DL =======================================
@@ -788,7 +708,8 @@ for threshold in THRESHOLDS:
             market=market,
             trader_cache=trader_cache,
             run_by="year",
-            tcn_score_threshold=threshold
+            tcn_score_threshold=threshold,
+            forward_hours = FORWARD_HOURS
         )
 
         equity = pd.Series(
@@ -815,4 +736,4 @@ print(threshold_trader_check.to_string(index=False))
 # =============================================================================================================
 # Select the final dl_score_threshold only after inspecting the sequential trader table above.
 # Prefer a threshold that improves performance robustly across calibration years while retaining a credible trade count.
-# FINAL SELECTION: dl_score_threshold = SELECT AFTER MFIV CALIBRATION
+# FINAL SELECTION: dl_score_threshold = 0.00000

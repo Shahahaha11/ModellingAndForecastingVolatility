@@ -10,7 +10,16 @@ class Chain:
         self.instruments = []
  
 class Instrument:
-    def __init__(self, symbol, strike, right, direction, price_per_contract, expiry, option_price_btc):
+    def __init__(self,
+                 symbol,
+                 strike,
+                 right,
+                 direction,
+                 price_per_contract,
+                 expiry,
+                 option_price_btc,
+                 amount= 1.0
+                 ):
         self.Symbol = symbol
         self.Strike = strike
         self.Right = right
@@ -18,6 +27,7 @@ class Instrument:
         self.Price = price_per_contract
         self.Expiry = expiry
         self.OptionPriceBTC = option_price_btc
+        self.Amount = float(amount)
  
 class Holdings: 
     def __init__(self, cash, now):
@@ -30,24 +40,27 @@ class Holdings:
  
     def get_time(self):
         return self.time
-        
-    def long_instrument(self, instrument):
-        self.instruments.append(instrument)
  
-    def short_instrument(self, instrument):
-        self.instruments.append(instrument)
- 
-    def close_position(self, key, qty=1):
+    def close_position(self, key, qty):
         # FIX: only remove `qty` matching contracts, not every contract matching the key.
         strike, expiry, right, direction = key
+        qty_left = float(qty)
         remaining = []
-        removed = 0
         for i in self.instruments:
-            if (removed < qty and i.Strike == strike and i.Expiry == expiry
-                    and i.Right == right and i.Direction == direction):
-                removed += 1
-                continue
-            remaining.append(i)
+            match = (
+                i.Strike == strike
+                and i.Expiry == expiry
+                and i.Right == right 
+                and i.Direction == direction
+            )
+            if match and qty_left > 0:
+                closed = min(i.Amount, qty_left)
+                i.Amount -= closed
+                qty_left -= closed
+                if i.Amount > 0 :
+                    remaining.append(i)
+            else :
+                remaining.append(i)
         self.instruments = remaining
  
 class Market:
@@ -87,7 +100,11 @@ class Market:
 
     def calculate_margin_requirements(self):
         # Counts only active short positions to lock margin capital
-        short_qty = sum(1 for i in self.holdings.instruments if i.Direction == "sell")
+        short_qty = sum(
+            i.Amount
+            for i in self.holdings.instruments
+            if i.Direction == "sell"
+        )
         
         # FIXED: Removed contract_size completely; uses your 100x multiplier scale natively
         self.locked_initial_margin = self.spot * self.im_multiplier * short_qty
@@ -120,7 +137,8 @@ class Market:
                 row["direction"],
                 row["price_per_contract"],
                 row["maturity"],
-                row["price"]
+                row["price"],
+                row["amount"]
             )
             for _, row in self.current.iterrows()
         ]
@@ -139,12 +157,14 @@ class Market:
                 base_fee = 0.00015 * self.spot 
                 fee_cap = 0.125 * payoff
                 delivery_fee = min(base_fee, fee_cap)
-                    
+                                
+            delivery_fee *= i.Amount
+
             if i.Direction == "buy":
-                cash_change = (payoff) - delivery_fee
+                cash_change = payoff * i.Amount - delivery_fee
             else:
-                cash_change = -(payoff) - delivery_fee
- 
+                cash_change = -(payoff * i.Amount) - delivery_fee 
+
             self.transactions.append({
                 "time": self.now,
                 "action": "expiry_settlement",
@@ -153,7 +173,7 @@ class Market:
                 "expiry": i.Expiry,
                 "right": i.Right,
                 "held_direction": i.Direction,
-                "qty": 1,
+                "qty": i.Amount ,
                 "price": payoff,
                 "fee": delivery_fee,
                 "cash_change": cash_change,
@@ -161,7 +181,7 @@ class Market:
                 "cash_after": self.cash + cash_change,
                 "spot": self.spot
             })
- 
+
             self.cash += cash_change
  
         self.holdings.instruments = [i for i in self.holdings.instruments if i.Expiry > self.now]
@@ -169,13 +189,14 @@ class Market:
         self.calculate_margin_requirements()
     
     def buy(self, instrument, qty=1):
+
+        qty = float(qty)
+        if qty <= 0 or qty > instrument.Amount:
+            return None
         fee = min(0.0003, 0.125 * instrument.OptionPriceBTC) * self.spot * qty
         cash_change = -(instrument.Price * qty + fee)
-
         if self.get_free_liquidity() + cash_change < 0:
             return None
-        # if self.cash + cash_change < 0:
-        #     return None
 
         order = {
             "time": self.now,
@@ -188,8 +209,8 @@ class Market:
             "qty": qty,
             "entry_price": instrument.Price
         }
-        self.orders.append(order)
 
+        self.orders.append(order)
         self.transactions.append({
             "time": self.now,
             "action": "buy_to_open",
@@ -209,33 +230,46 @@ class Market:
 
         self.cash += cash_change
         self.holdings.cash = self.cash
-
-        for _ in range(qty):
-            self.holdings.instruments.append(
-                Instrument(
-                    instrument.Symbol,
-                    instrument.Strike,
-                    instrument.Right,
-                    "buy",
-                    instrument.Price,
-                    instrument.Expiry,
-                    instrument.OptionPriceBTC
-                )
+        self.holdings.instruments.append(
+            Instrument(
+                instrument.Symbol,
+                instrument.Strike,
+                instrument.Right,
+                "buy",
+                instrument.Price,
+                instrument.Expiry,
+                instrument.OptionPriceBTC,
+                qty
             )
+        )
 
+        instrument.Amount -= qty
+        if instrument.Amount <= 0:
+            self.chain.instruments.remove(instrument)
         self.calculate_margin_requirements()
         return order
-        
+
+
     def sell(self, instrument, qty=1):
+
+        qty = float(qty)
+        if qty <= 0 or qty > instrument.Amount:
+            return None
         fee = min(0.0003, 0.125 * instrument.OptionPriceBTC) * self.spot * qty
         cash_change = instrument.Price * qty - fee
-
         new_initial_margin = self.spot * self.im_multiplier * qty
         new_buffer_margin = self.spot * self.mm_buffer_rate * qty
-
-        if (self.cash + cash_change - self.locked_initial_margin - self.locked_buffer_margin - new_initial_margin - new_buffer_margin < 0):
+        if (
+            self.cash
+            + cash_change
+            - self.locked_initial_margin
+            - self.locked_buffer_margin
+            - new_initial_margin
+            - new_buffer_margin
+            < 0
+        ):
             return None
-        
+
         order = {
             "time": self.now,
             "symbol": instrument.Symbol,
@@ -247,8 +281,8 @@ class Market:
             "qty": qty,
             "entry_price": instrument.Price
         }
-        self.orders.append(order)
 
+        self.orders.append(order)
         self.transactions.append({
             "time": self.now,
             "action": "sell_to_open",
@@ -265,129 +299,108 @@ class Market:
             "cash_after": self.cash + cash_change,
             "spot": self.spot
         })
-
         self.cash += cash_change
         self.holdings.cash = self.cash
-
-        for _ in range(qty):
-            self.holdings.instruments.append(
-                Instrument(
-                    instrument.Symbol,
-                    instrument.Strike,
-                    instrument.Right,
-                    "sell",
-                    instrument.Price,
-                    instrument.Expiry,
-                    instrument.OptionPriceBTC
-                )
+        self.holdings.instruments.append(
+            Instrument(
+                instrument.Symbol,
+                instrument.Strike,
+                instrument.Right,
+                "sell",
+                instrument.Price,
+                instrument.Expiry,
+                instrument.OptionPriceBTC,
+                qty
             )
-
+        )
+        instrument.Amount -= qty
+        if instrument.Amount <= 0:
+            self.chain.instruments.remove(instrument)
         self.calculate_margin_requirements()
         return order
-     
-    # def liquidate(self, key, instrument, qty=1):
-    #     if instrument.Direction == "buy":
-    #         action_name = "sell_to_close"
-    #         exec_dir = "sell"
-    #     else:
-    #         action_name = "buy_to_close"
-    #         exec_dir = "buy"
- 
-    #     current_inst = next((i for i in self.chain.instruments if i.Symbol == instrument.Symbol), None)
-    #     current_price = current_inst.Price if current_inst else instrument.Price
-    #     opt_price_btc = current_inst.OptionPriceBTC if current_inst else instrument.OptionPriceBTC
- 
-    #     fee = min(0.0003, 0.125 * opt_price_btc) * self.spot * qty
-        
-    #     if exec_dir == "sell":
-    #         cash_change = (current_price * qty) - fee
-    #     else:
-    #         cash_change = -(current_price * qty + fee)
- 
-    #     self.transactions.append({
-    #         "time": self.now,
-    #         "action": action_name,
-    #         "symbol": instrument.Symbol,
-    #         "strike": instrument.Strike,
-    #         "expiry": instrument.Expiry,
-    #         "right": instrument.Right,
-    #         "held_direction": instrument.Direction,
-    #         "qty": qty,
-    #         "price": current_price,
-    #         "fee": fee,
-    #         "cash_change": cash_change,
-    #         "cash_before": self.cash,
-    #         "cash_after": self.cash + cash_change,
-    #         "spot": self.spot
-    #     })
- 
-    #     self.cash += cash_change
-    #     self.holdings.close_position(key, qty)
-    #     self.holdings.cash = self.cash
-    #     self.calculate_margin_requirements()
-    def liquidate(self, key, instrument, qty=1):
-        if instrument.Direction == "buy":
-            action_name = "sell_to_close"
-            exec_dir = "sell"
-        else:
-            action_name = "buy_to_close"
-            exec_dir = "buy"
 
-        opposite_direction = "sell" if instrument.Direction == "buy" else "buy"
+    def liquidate(self, key, instrument, qty=None):
 
-        current_inst = next(
-            (
-                i for i in self.chain.instruments
-                if (
-                    i.Strike == instrument.Strike
-                    and i.Expiry == instrument.Expiry
-                    and i.Right == instrument.Right
-                    and i.Direction == opposite_direction
-                )
-            ),
-            None
+        if qty is None:
+            qty = instrument.Amount
+        qty_left = float(qty)
+        opposite_direction = (
+            "sell"
+            if instrument.Direction == "buy"
+            else "buy"
         )
 
-        if current_inst is None:
+        action_name = (
+            "sell_to_close"
+            if instrument.Direction == "buy"
+            else "buy_to_close"
+        )
+
+        matching = [
+            i for i in self.chain.instruments
+            if (
+                i.Strike == instrument.Strike
+                and i.Expiry == instrument.Expiry
+                and i.Right == instrument.Right
+                and i.Direction == opposite_direction
+            )
+        ]
+
+        total_closed = 0.0
+
+        for current_inst in matching:
+
+            if qty_left <= 0:
+                break
+
+            fill_qty = min(qty_left, current_inst.Amount)
+
+            fee = min(
+                0.0003,
+                0.125 * current_inst.OptionPriceBTC
+            ) * self.spot * fill_qty
+
+            if instrument.Direction == "buy":
+                cash_change = current_inst.Price * fill_qty - fee
+            else:
+                cash_change = -(current_inst.Price * fill_qty + fee)
+
+            self.transactions.append({
+                "time": self.now,
+                "action": action_name,
+                "symbol": instrument.Symbol,
+                "strike": instrument.Strike,
+                "expiry": instrument.Expiry,
+                "right": instrument.Right,
+                "held_direction": instrument.Direction,
+                "qty": fill_qty,
+                "price": current_inst.Price,
+                "fee": fee,
+                "cash_change": cash_change,
+                "cash_before": self.cash,
+                "cash_after": self.cash + cash_change,
+                "spot": self.spot
+            })
+
+            self.cash += cash_change
+
+            current_inst.Amount -= fill_qty
+            qty_left -= fill_qty
+            total_closed += fill_qty
+
+            if current_inst.Amount <= 0:
+                self.chain.instruments.remove(current_inst)
+
+        if total_closed == 0:
             return None
 
-        current_price = current_inst.Price
-        opt_price_btc = current_inst.OptionPriceBTC
+        self.holdings.close_position(key, total_closed)
 
-        fee = min(
-            0.0003,
-            0.125 * opt_price_btc
-        ) * self.spot * qty
-
-        if exec_dir == "sell":
-            cash_change = current_price * qty - fee
-        else:
-            cash_change = -(current_price * qty + fee)
-
-        self.transactions.append({
-            "time": self.now,
-            "action": action_name,
-            "symbol": instrument.Symbol,
-            "strike": instrument.Strike,
-            "expiry": instrument.Expiry,
-            "right": instrument.Right,
-            "held_direction": instrument.Direction,
-            "qty": qty,
-            "price": current_price,
-            "fee": fee,
-            "cash_change": cash_change,
-            "cash_before": self.cash,
-            "cash_after": self.cash + cash_change,
-            "spot": self.spot
-        })
-
-        self.cash += cash_change
-        self.holdings.close_position(key, qty)
         self.holdings.cash = self.cash
         self.calculate_margin_requirements()
 
         return True
-                
+
     def get_equity_history(self):
         if not self.equity_history:
             return pd.DataFrame(columns=[
@@ -399,7 +412,6 @@ class Market:
             ])
 
         return pd.DataFrame(self.equity_history).set_index("time")
-    
     def record_equity(self):
         option_value = self.option_value()
         self.option_values.append(option_value)
@@ -475,9 +487,9 @@ class Market:
                         price_now = strike * np.exp(-r * tau) * Nd2_put - spot * Nd1_put
  
             if instrument.Direction == "sell":
-                option_value -= price_now
+                option_value -= price_now * instrument.Amount
             else:
-                option_value += price_now
+                option_value += price_now * instrument.Amount
  
         return option_value
  

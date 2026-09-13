@@ -1,3 +1,5 @@
+# STATUS : RUNNING
+# CURRENTLY USES OPTION 2 VALIDATION STYLE. OPTION 4 IS NOT YET KNOWN.
 # VALIDATION GLOBAL
 # SEARCH WORDS :
 # GLOBAL_VALIDATION_MODELS
@@ -38,7 +40,7 @@ sys.modules.pop("srcB", None)
 
 import pickle 
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by_year/outputs_by_year_04.pkl", "rb") as f:
+with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by_year/outputs_by_year_08.pkl", "rb") as f:
     outputs_by_year = pickle.load(f)
 
 with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/OOS/outputs_by_year/outputs_by_year_01.pkl", "rb") as f:
@@ -102,33 +104,25 @@ QUARTERS = ["q1", "q2", "q3", "q4"]
 
 for y in YEARS:
     Xq_by_year[y] = {}
-    Xq_by_year[y]["q1"] = X_by_year[y].loc[f"{y}-01-01" : f"{y}-03-31 23:59:59"]
-    Xq_by_year[y]["q2"] = X_by_year[y].loc[f"{y}-04-01" : f"{y}-06-30 23:59:59"]
-    Xq_by_year[y]["q3"] = X_by_year[y].loc[f"{y}-07-01" : f"{y}-09-30 23:59:59"]
-    Xq_by_year[y]["q4"] = X_by_year[y].loc[f"{y}-10-01" : f"{y}-12-31 23:59:59"]
-    
-    
-
+    Xq_by_year[y]["q1"] = X_by_year[y].loc[f"{y}-01-01" : f"{y}-03-31 23:59:59"].copy()
+    Xq_by_year[y]["q2"] = X_by_year[y].loc[f"{y}-04-01" : f"{y}-06-30 23:59:59"].copy()
+    Xq_by_year[y]["q3"] = X_by_year[y].loc[f"{y}-07-01" : f"{y}-09-30 23:59:59"].copy()
+    Xq_by_year[y]["q4"] = X_by_year[y].loc[f"{y}-10-01" : f"{y}-12-31 23:59:59"].copy()
+        
+        
 # =============================================================================================================
 # ======================================= MFIV SCALING ========================================================
+# ================== CONVERT ANNUALIZED MFIV -> CUMULATIVE H-HOUR DECIMAL VARIANCE ==========================
 # =============================================================================================================
-# CONVERTS ANNUALIZED MFIV -> CUMULATIVE H-HOUR DECIMAL VARIANCE
 
 MFIVS = list(range(2, 577))
 
 for y in YEARS:
     for q in QUARTERS:
         for H in MFIVS:
-            Xq_by_year[y][q][f"MFIV_{H}"] *= (H / 8760.0)
+            Xq_by_year[y][q][f"MFIV_{H}"] *= H / 8760.0
 
 
-for y in YEARS:
-    for q in QUARTERS:
-        Xq_by_year[y][q] = Xq_by_year[y][q].loc[
-            :, ~Xq_by_year[y][q].columns.duplicated(keep="first")
-        ]
-        
-        
 # =============================================================================================================
 # ======================================= BORROW RFR COLUMN ===================================================
 # =============================================================================================================
@@ -158,11 +152,13 @@ for y in YEARS:
 # ======================================= FROZEN MODEL SPECIFICATIONS =========================================
 # =============================================================================================================
 
-TCN_SCORE_THRESHOLD = 0.003
-GRU_SCORE_THRESHOLD = 0.0000
-TSM_SCORE_THRESHOLD = 0.0030653050635010004
-DL_SCORE_THRESHOLD = 0.005388132412917912
-ITR_SCORE_THRESHOLD = 0.0034569846466183662
+TCN_SCORE_THRESHOLD = 0.000
+GRU_SCORE_THRESHOLD = 0.000
+TSM_SCORE_THRESHOLD = 0.003539
+ITR_SCORE_THRESHOLD = 0.009316
+DL_SCORE_THRESHOLD = 0.000
+
+FORWARD_HOURS = 96
 
 # =============================================================================================================
 # ======================================= LOAD FROZEN MODEL BUNDLES ===========================================
@@ -173,16 +169,16 @@ MODEL_YEAR = 2021
 with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/TCN/tcn_bundle_by_year.pkl", "rb") as f:
     tcn_bundle_by_year = pickle.load(f)
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/gru/gru_bundle_by_year.pkl", "rb") as f:
+with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/GRU/gru_bundle_by_year.pkl", "rb") as f:
     gru_bundle_by_year = pickle.load(f)
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/tsm/tsm_bundle_by_year.pkl", "rb") as f:
+with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/TSM/tsm_bundle_by_year.pkl", "rb") as f:
     tsm_bundle_by_year = pickle.load(f)
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/dl/dl_bundle_by_year.pkl", "rb") as f:
+with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/DL/dl_bundle_by_year.pkl", "rb") as f:
     dl_bundle_by_year = pickle.load(f)
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/itr/itr_bundle_by_year.pkl", "rb") as f:
+with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/ITR/itr_bundle_by_year.pkl", "rb") as f:
     itr_bundle_by_year = pickle.load(f)
 
 
@@ -197,17 +193,17 @@ itr_bundle = itr_bundle_by_year[MODEL_YEAR]
 # ======================================= IMPORT MODEL PREDICTORS =============================================
 # =============================================================================================================
 
-sys.modules.pop("srcB.tcn_model_v2", None)
-sys.modules.pop("srcB.gru_model", None)
-sys.modules.pop("srcB.tsm_model", None)
-sys.modules.pop("srcB.dl_model", None)
-sys.modules.pop("srcB.itr_model", None)
+sys.modules.pop("srcB.tcn_model_mfiv", None)
+sys.modules.pop("srcB.gru_model_mfiv", None)
+sys.modules.pop("srcB.tsm_model_mfiv", None)
+sys.modules.pop("srcB.dl_model_mfiv", None)
+sys.modules.pop("srcB.itr_model_mfiv", None)
 
 from srcB.tcn_model_mfiv import predict_tcn
-from srcB.gru_model import predict_gru
-from srcB.tsm_model import predict_tsm
-from srcB.dl_model import predict_dl
-from srcB.itr_model import predict_itr
+from srcB.gru_model_mfiv import predict_gru
+from srcB.tsm_model_mfiv import predict_tsm
+from srcB.dl_model_mfiv import predict_dl
+from srcB.itr_model_mfiv import predict_itr
 
 # =============================================================================================================
 # ======================================= CHECKPOINT 2 ========================================================
@@ -216,6 +212,10 @@ from srcB.itr_model import predict_itr
 # 2021 data -> refit five models -> 2022 prediction
 # NEW:
 # saved HPO-fitted 2021 bundles -> 2022 prediction
+
+# DUPLICATES EXIST!
+for q in QUARTERS:
+    Xq_by_year[2021][q] = Xq_by_year[2021][q].drop(columns="mfiv_avg")
 # =============================================================================================================
 # ======================================= PREPARE VALIDATION INPUT ============================================
 # =============================================================================================================
@@ -317,7 +317,6 @@ for q in QUARTERS:
     outputs_by_year[VALIDATION_YEAR][q]["MFIV_24"] = Xq_by_year[VALIDATION_YEAR][q]["MFIV_24"].reindex(
         outputs_by_year[VALIDATION_YEAR][q].index
     )
-    
 
 # =============================================================================================================
 # ======================================= CHECKPOINT 3 ========================================================
@@ -357,8 +356,8 @@ for q in QUARTERS:
 
 from srcB.market import Market
 
-sys.modules.pop("srcB.trader_testing_tcn", None)
-from srcB.trader_testing_tcn import testing_execute_trading_strategy
+sys.modules.pop("srcB.trader_testing_tcn_v1", None)
+from srcB.trader_testing_tcn_v1 import testing_execute_trading_strategy
 
 
 MODEL_CONFIGS = {
@@ -428,10 +427,12 @@ for MODEL, config in MODEL_CONFIGS.items():
         market=market,
         trader_cache=trader_cache,
         run_by="year",
-        tcn_score_threshold=config["threshold"]
+        tcn_score_threshold=config["threshold"],
+        forward_hours=FORWARD_HOURS
     )
 
-
+    if len(market.transactions) == 0:
+        raise RuntimeError(f"{MODEL} validation trader produced zero transactions in {VALIDATION_YEAR}")
     history_key = f"{MODEL}_{str(VALIDATION_YEAR)[2:]}"
 
     equity_curve = market.get_equity_history()
@@ -457,7 +458,7 @@ print(strategy_results.keys())
 # ======================================= VALIDATION SHARPE CHECK =============================================
 # =============================================================================================================
 
-MODELS = ["tcn_mfiv", "gru_mfiv", "tsm_mfiv", "dl_mfiv", "itr_mfiv"]
+MODELS = ["tcn_mfiv", "gru_mfiv", "tsm_mfiv", "itr_mfiv", "dl_mfiv"]
 rows = []
 for MODEL in MODELS:
     history_key = f"{MODEL}_{str(VALIDATION_YEAR)[2:]}"
@@ -491,6 +492,3 @@ with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/VAL/strategy_
 
 print(strategy_results.keys())
 
-# TCN_SCORE_THRESHOLD = 0.003
-# Trade only when the best of the four predicted option strategies
-# has expected PnL greater than or equal to 0.3% of BTC spot at entry.

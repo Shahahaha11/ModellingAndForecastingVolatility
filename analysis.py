@@ -42,7 +42,7 @@ with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by
 
 # IMPORTS FROM SRC
 from srcB.market import *
-from srcB.trader_testing import testing_execute_trading_strategy
+from srcB.trader_testing_tcn_v1 import testing_execute_trading_strategy
 from srcB.helpers import *
 
 # READ D_BTC AND DF
@@ -95,7 +95,6 @@ for y in YEARS:
 # ==================================================================================================================
 
 MFIVS = list(range(2, 577))
-
 for y in YEARS:
     for q in QUARTERS:
         for H in MFIVS:
@@ -128,6 +127,7 @@ for y in YEARS:
 with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/hyperparameters/tcn_best_params.pkl", "rb") as f:
     best_tcn_params = pickle.load(f)
 
+FORWARD_HOURS = 96
 # # ======================================= YEARLY_TCN_ESTIMATION  ===================================================
 # # ==================================================================================================================
 sys.modules.pop("srcB.tcn_model_mfiv", None)
@@ -157,7 +157,7 @@ for y in YEARS:
         option_df=df_raw_by_year[y],
         time_df=d_btc_raw_by_year[y],
         sequence_length=168,
-        forward_hours=24,
+        forward_hours=FORWARD_HOURS,
         delta_target=0.20,
         channels=best_tcn_params["channels"],
         kernel_size=best_tcn_params["kernel_size"],
@@ -216,7 +216,7 @@ with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by
 
 # # IMPORTS FROM SRC
 from srcB.market import *
-from srcB.trader_testing import testing_execute_trading_strategy
+from srcB.trader_testing_tcn_v1 import testing_execute_trading_strategy
 from srcB.helpers import *
 
 # ==================================================================================================================
@@ -277,8 +277,8 @@ else:
 # ==================================================================================================================
 # sys.modules.pop("srcB", None)
 
-sys.modules.pop("srcB.trader_testing_tcn", None)
-from srcB.trader_testing_tcn import testing_execute_trading_strategy
+sys.modules.pop("srcB.trader_testing_tcn_v1", None)
+from srcB.trader_testing_tcn_v1 import testing_execute_trading_strategy
 YEARS = [2019, 2020, 2021]
 MODELS = [
     "tcn_mfiv"
@@ -317,7 +317,8 @@ for YEAR in YEARS:
                 mean_hours=12,
                 ql=0.10,
                 qh=0.90,
-                z=1.645
+                z=1.645,
+                forward_hours=FORWARD_HOURS
             )
 
             greek_tests.extend(greek_tests_q)
@@ -361,11 +362,7 @@ with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/data_strategy
 ## ============================================= SHARPEE  ===========================================================
 ## ==================================================================================================================
 YEARS = [2019, 2020, 2021]
-MODELS = [
-    # "garch",
-    # "garch_n_mfiv",
-    "tcn_mfiv"
-]
+MODELS = ["tcn_mfiv"]
 rows = []
 
 for y in YEARS:
@@ -391,9 +388,7 @@ print(sharpe_table)
 # ==================================================================================================================
 import matplotlib.pyplot as plt
 # MODELS = ["garch", "garch_mfiv", "garch_n_mfiv", "garch_mfiv_avg", "regime_switching_mfiv"]
-MODELS = [
-    "tcn_mfiv"
-]
+MODELS = ["tcn_mfiv"]
 PLOT_YEAR = 2019
 plt.figure(figsize=(12, 6))
 for MODEL in MODELS:
@@ -408,201 +403,153 @@ plt.legend()
 plt.show()
 
 
-# ========================================================================================================================================
-# ========================================== ALL STRATEGY DIAGNOSTICS  ===================================================================
-# ========================================================================================================================================
-# position_side = "long_straddle"
-position_side = "short_strangle"
-all_groups = []
-for y in YEARS:
-    for the_model in MODELS:
-        tx = pd.DataFrame(strategy_results[f"{the_model}_{str(y)[2:]}"]["transactions"]).sort_values("time")
-        open_actions = {"buy_to_open", "sell_to_open"}
-        close_actions = {"buy_to_close", "sell_to_close", "liquidate", "expiry_settlement"}
-        trades = []
-        open_pos = {}
-        for _, r in tx.iterrows():
-            sym = r["symbol"]
-            if r["action"] in open_actions:
-                open_pos[sym] = {
-                    "entry_time": r["time"],
-                    "right": r["right"],
-                    "direction": r["held_direction"],
-                    "pnl": float(r["cash_change"])
-                }
-            elif r["action"] in close_actions and sym in open_pos:
-                open_pos[sym]["pnl"] += float(r["cash_change"])
-                open_pos[sym]["exit_time"] = r["time"]
+# # ============ INCOMPATIBLE WITH THE NEW MARKET CLASS================================================================================
+# # ========================================== ALL STRATEGY DIAGNOSTICS  ===================================================================
+# # ========================================================================================================================================
+# # position_side = "long_straddle"
+# position_side = "short_strangle"
+# all_groups = []
+# for y in YEARS:
+#     for the_model in MODELS:
+#         tx = pd.DataFrame(strategy_results[f"{the_model}_{str(y)[2:]}"]["transactions"]).sort_values("time")
+#         open_actions = {"buy_to_open", "sell_to_open"}
+#         close_actions = {"buy_to_close", "sell_to_close", "liquidate", "expiry_settlement"}
+#         trades = []
+#         open_pos = {}
+#         for _, r in tx.iterrows():
+#             sym = r["symbol"]
+#             if r["action"] in open_actions:
+#                 open_pos[sym] = {
+#                     "entry_time": r["time"],
+#                     "right": r["right"],
+#                     "direction": r["held_direction"],
+#                     "pnl": float(r["cash_change"])
+#                 }
+#             elif r["action"] in close_actions and sym in open_pos:
+#                 open_pos[sym]["pnl"] += float(r["cash_change"])
+#                 open_pos[sym]["exit_time"] = r["time"]
 
-                trades.append({
-                    "symbol": sym,
-                    **open_pos.pop(sym)
-                })
-        legs = pd.DataFrame(trades)
-        for entry_time, g in legs.groupby("entry_time"):
-            side = (
-                "short_strangle"
-                if (g["direction"] == "sell").all()
-                else "long_straddle"
-            )
-            if side != position_side:
-                continue
-            call_pnl = g.loc[g["right"] == "C", "pnl"].sum()
-            put_pnl = g.loc[g["right"] == "P", "pnl"].sum()
-            all_groups.append({
-                "year": y,
-                "model": the_model,
-                "entry": entry_time,
-                "exit": g["exit_time"].max(),
-                "side": side,
-                "call_pnl": call_pnl,
-                "put_pnl": put_pnl,
-                "total_pnl": call_pnl + put_pnl,
-                "call_result": "PROFIT" if call_pnl > 0 else "LOSS",
-                "put_result": "PROFIT" if put_pnl > 0 else "LOSS" if put_pnl < 0 else "FLAT",
-                "position_result": "PROFIT" if call_pnl + put_pnl > 0 else "LOSS"
-            })
-result_all = pd.DataFrame(all_groups)
-print(result_all.to_string(index=False))
-summary = (
-    result_all.groupby(["year", "model"])
-    .agg(
-        positions=("total_pnl", "size"),
-        profitable=("total_pnl", lambda x: (x > 0).sum()),
-        losing=("total_pnl", lambda x: (x < 0).sum()),
-        total_pnl=("total_pnl", "sum"),
-        call_profit=("call_pnl", lambda x: (x > 0).sum()),
-        call_loss=("call_pnl", lambda x: (x < 0).sum()),
-        put_profit=("put_pnl", lambda x: (x > 0).sum()),
-        put_loss=("put_pnl", lambda x: (x < 0).sum())
-    )
-    .reset_index()
-)
-print("\nSUMMARY")
-print(summary.to_string(index=False))
+#                 trades.append({
+#                     "symbol": sym,
+#                     **open_pos.pop(sym)
+#                 })
+#         legs = pd.DataFrame(trades)
+#         for entry_time, g in legs.groupby("entry_time"):
+#             side = (
+#                 "short_strangle"
+#                 if (g["direction"] == "sell").all()
+#                 else "long_straddle"
+#             )
+#             if side != position_side:
+#                 continue
+#             call_pnl = g.loc[g["right"] == "C", "pnl"].sum()
+#             put_pnl = g.loc[g["right"] == "P", "pnl"].sum()
+#             all_groups.append({
+#                 "year": y,
+#                 "model": the_model,
+#                 "entry": entry_time,
+#                 "exit": g["exit_time"].max(),
+#                 "side": side,
+#                 "call_pnl": call_pnl,
+#                 "put_pnl": put_pnl,
+#                 "total_pnl": call_pnl + put_pnl,
+#                 "call_result": "PROFIT" if call_pnl > 0 else "LOSS",
+#                 "put_result": "PROFIT" if put_pnl > 0 else "LOSS" if put_pnl < 0 else "FLAT",
+#                 "position_result": "PROFIT" if call_pnl + put_pnl > 0 else "LOSS"
+#             })
+# result_all = pd.DataFrame(all_groups)
+# print(result_all.to_string(index=False))
+# summary = (
+#     result_all.groupby(["year", "model"])
+#     .agg(
+#         positions=("total_pnl", "size"),
+#         profitable=("total_pnl", lambda x: (x > 0).sum()),
+#         losing=("total_pnl", lambda x: (x < 0).sum()),
+#         total_pnl=("total_pnl", "sum"),
+#         call_profit=("call_pnl", lambda x: (x > 0).sum()),
+#         call_loss=("call_pnl", lambda x: (x < 0).sum()),
+#         put_profit=("put_pnl", lambda x: (x > 0).sum()),
+#         put_loss=("put_pnl", lambda x: (x < 0).sum())
+#     )
+#     .reset_index()
+# )
+# print("\nSUMMARY")
+# print(summary.to_string(index=False))
 
-# ========================================================================================================================================
-# ========================================== TCN SPECIFIC (TRADER DIAGNOSTICS)============================================
-# ========================================================================================================================================
-# This block reconstructs the actual executed TCN option positions from the trader transaction log and summarizes how each TCN strategy type performed.
-MODEL = "tcn_mfiv"
-all_trades = []
-for y in YEARS:
-    tx = pd.DataFrame(strategy_results[f"{MODEL}_{str(y)[2:]}"]["transactions"]).sort_values("time")
+# # =======INCOMPATIBLE WITH THE NEW MARKET CLASS AND TRADER ==================================================================================
+# # ========================================== TCN SPECIFIC (TRADER DIAGNOSTICS)============================================
+# # ========================================================================================================================================
+# # This block reconstructs the actual executed TCN option positions from the trader transaction log and summarizes how each TCN strategy type performed.
+# MODEL = "tcn_mfiv"
+# all_trades = []
+# for y in YEARS:
+#     tx = pd.DataFrame(strategy_results[f"{MODEL}_{str(y)[2:]}"]["transactions"]).sort_values("time")
 
-    open_actions = {"buy_to_open", "sell_to_open"}
-    close_actions = {"buy_to_close", "sell_to_close", "liquidate", "expiry_settlement"}
+#     open_actions = {"buy_to_open", "sell_to_open"}
+#     close_actions = {"buy_to_close", "sell_to_close", "liquidate", "expiry_settlement"}
 
-    trades = []
-    open_pos = {}
+#     trades = []
+#     open_pos = {}
 
-    for _, r in tx.iterrows():
-        sym = r["symbol"]
-        if r["action"] in open_actions:
-            open_pos[sym] = {
-                "entry_time": r["time"],
-                "right": r["right"],
-                "strike": r["strike"],
-                "direction": r["held_direction"],
-                "pnl": float(r["cash_change"])
-            }
+#     for _, r in tx.iterrows():
+#         sym = r["symbol"]
+#         if r["action"] in open_actions:
+#             open_pos[sym] = {
+#                 "entry_time": r["time"],
+#                 "right": r["right"],
+#                 "strike": r["strike"],
+#                 "direction": r["held_direction"],
+#                 "pnl": float(r["cash_change"])
+#             }
 
-        elif r["action"] in close_actions and sym in open_pos:
-            open_pos[sym]["pnl"] += float(r["cash_change"])
-            open_pos[sym]["exit_time"] = r["time"]
-            trades.append({
-                "symbol": sym,
-                **open_pos.pop(sym)
-            })
+#         elif r["action"] in close_actions and sym in open_pos:
+#             open_pos[sym]["pnl"] += float(r["cash_change"])
+#             open_pos[sym]["exit_time"] = r["time"]
+#             trades.append({
+#                 "symbol": sym,
+#                 **open_pos.pop(sym)
+#             })
 
-    legs = pd.DataFrame(trades)
-    for entry_time, g in legs.groupby("entry_time"):
-        direction = "short" if (g["direction"] == "sell").all() else "long"
-        structure = "straddle" if g["strike"].nunique() == 1 else "strangle"
-        side = f"{direction}_{structure}"
-        call_pnl = g.loc[g["right"] == "C", "pnl"].sum()
-        put_pnl = g.loc[g["right"] == "P", "pnl"].sum()
-        total_pnl = call_pnl + put_pnl
+#     legs = pd.DataFrame(trades)
+#     for entry_time, g in legs.groupby("entry_time"):
+#         direction = "short" if (g["direction"] == "sell").all() else "long"
+#         structure = "straddle" if g["strike"].nunique() == 1 else "strangle"
+#         side = f"{direction}_{structure}"
+#         call_pnl = g.loc[g["right"] == "C", "pnl"].sum()
+#         put_pnl = g.loc[g["right"] == "P", "pnl"].sum()
+#         total_pnl = call_pnl + put_pnl
 
-        all_trades.append({
-            "year": y,
-            "entry": entry_time,
-            "exit": g["exit_time"].max(),
-            "side": side,
-            "call_pnl": call_pnl,
-            "put_pnl": put_pnl,
-            "total_pnl": total_pnl,
-            "position_result": "PROFIT" if total_pnl > 0 else "LOSS"
-        })
+#         all_trades.append({
+#             "year": y,
+#             "entry": entry_time,
+#             "exit": g["exit_time"].max(),
+#             "side": side,
+#             "call_pnl": call_pnl,
+#             "put_pnl": put_pnl,
+#             "total_pnl": total_pnl,
+#             "position_result": "PROFIT" if total_pnl > 0 else "LOSS"
+#         })
 
-tcn_trades = pd.DataFrame(all_trades)
-print(tcn_trades.to_string(index=False))
+# tcn_trades = pd.DataFrame(all_trades)
+# print(tcn_trades.to_string(index=False))
 
-summary = (
-    tcn_trades.groupby(["year", "side"])
-    .agg(
-        positions=("total_pnl", "size"),
-        profitable=("total_pnl", lambda x: (x > 0).sum()),
-        losing=("total_pnl", lambda x: (x < 0).sum()),
-        total_pnl=("total_pnl", "sum"),
-        avg_pnl=("total_pnl", "mean")
-    )
-    .reset_index()
-)
-print("\nSUMMARY")
-print(summary.to_string(index=False))
+# summary = (
+#     tcn_trades.groupby(["year", "side"])
+#     .agg(
+#         positions=("total_pnl", "size"),
+#         profitable=("total_pnl", lambda x: (x > 0).sum()),
+#         losing=("total_pnl", lambda x: (x < 0).sum()),
+#         total_pnl=("total_pnl", "sum"),
+#         avg_pnl=("total_pnl", "mean")
+#     )
+#     .reset_index()
+# )
+# print("\nSUMMARY")
+# print(summary.to_string(index=False))
 
 # # ============================================= PHASE 2 =====================================================
 # # ======================================= DIAGNOSTICS FOR TCN ===============================================
 # # ===========================================================================================================
-## =============================================================================================================
-## =========================== TCN TARGET PERFORMANCE: EXECUTED VS SKIPPED =====================================
-
-# In every year the executed subset has lower target Sharpe than the skipped subset, most clearly in 2021.
-# Therefore trader path dependence is again selecting only a small and weaker subset of the model's available opportunities.
-
-# However, action_match is only 0.41, 0.65, and 0.75 here, unlike the exact action matching established in the MFIV analysis.
-# This reconstruction from transaction-level side labels should therefore not yet be treated as the definitive execution diagnostic.
-# The following greek_tests-based execution check is the important one for verifying the actual TCN action at entry.
-# =============================================================================================================
-# =========================== TCN TARGET PERFORMANCE: EXECUTED VS SKIPPED =====================================
-# =============================================================================================================
-
-target_cols = [
-    "target_long_straddle",
-    "target_short_straddle",
-    "target_long_strangle",
-    "target_short_strangle"
-]
-rows = []
-for y in YEARS:
-    test = pd.concat([
-        tcn_output_by_year[y][["tcn_action"]],
-        tcn_targets_by_year[y][target_cols]
-    ], axis=1, sort=False).dropna()
-    test = test[test["tcn_action"] != "no_trade"].copy()
-    test["target_pnl"] = 0.0
-    for action in ["long_straddle", "short_straddle", "long_strangle", "short_strangle"]:
-        m = test["tcn_action"] == action
-        test.loc[m, "target_pnl"] = test.loc[m, f"target_{action}"]
-    entries = tcn_trades[tcn_trades["year"] == y][["entry", "side"]].copy()
-    entries["entry"] = pd.to_datetime(entries["entry"], utc=True).dt.floor("h")
-    executed = test[test.index.isin(entries["entry"])]
-    skipped = test[~test.index.isin(entries["entry"])]
-    action_at_entry = test["tcn_action"].reindex(entries["entry"]).to_numpy()
-    action_match = (action_at_entry == entries["side"].to_numpy()).mean()
-    rows.append({
-        "year": y,
-        "signals": len(test),
-        "executed": len(executed),
-        "execution_rate": len(executed) / len(test),
-        "action_match": action_match,
-        "all_sharpe": test["target_pnl"].mean() / test["target_pnl"].std(),
-        "executed_sharpe": executed["target_pnl"].mean() / executed["target_pnl"].std(),
-        "skipped_sharpe": skipped["target_pnl"].mean() / skipped["target_pnl"].std()
-    })
-execution_check = pd.DataFrame(rows)
-print(execution_check)
 
 
 # =========================== REQUIRES STRATEGY_RESULTS =======================================================
@@ -720,7 +667,7 @@ print(score_check[[
 # # ===If I only retain signals with tcn_best_score >= threshold, does target-space performance improve? ========
 # # ================================= TCN_SCORE_THRESHOLD_CALIBRATION ===========================================
 # # =============================================================================================================
-
+# Heavy part, expensive computation
 tests = {}
 
 for y in YEARS:
@@ -775,12 +722,14 @@ print(threshold_check.to_string(index=False))
 ## We can be fairly confident that higher tcn_best_score identifies better opportunities inside the fitted target sample. The pattern is strong and appears independently in all three years.
 ## But we cannot yet say the actual trader Sharpe will improve. The trader only executes a small sequential subset of signals, which was exactly where 2019/2020 deteriorated.
 
-# =============================================================================================================
-# ================================ TCN SCORE THRESHOLD TRADER CALIBRATION =====================================
+
+# ======================= Use the MFIV score quantiles above as the threshold space, I had code there ============================
+# ===== Does the threshold improvement survive the actual sequential trader? =====
+# ================================ TCN_SCORE_THRESHOLD_TRADER_CALIBRATION =====================================
 # =============================================================================================================
 
 sys.modules.pop("srcB.trader_testing_tcn", None)
-from srcB.trader_testing_tcn import testing_execute_trading_strategy
+from srcB.trader_testing_tcn_v1 import testing_execute_trading_strategy
 
 THRESHOLDS = [
     0.0,
@@ -789,11 +738,9 @@ THRESHOLDS = [
     float(scores_all.quantile(.85)),
     float(scores_all.quantile(.90))
 ]
-
 rows = []
 
 for threshold in THRESHOLDS:
-
     for y in YEARS:
 
         market = Market(
@@ -813,70 +760,7 @@ for threshold in THRESHOLDS:
             trader_cache=trader_cache,
             run_by="year",
             tcn_score_threshold=threshold,
-        )
-
-        equity = pd.Series(
-            [s["equity"] for s in snapshots],
-            index=[s["time"] for s in snapshots],
-        )
-
-        returns = equity.pct_change().dropna()
-
-        sharpe = (
-            returns.mean()
-            / returns.std()
-            * np.sqrt(24 * 365)
-        )
-
-        rows.append({
-            "threshold": threshold,
-            "year": y,
-            "trades": len(greek_tests),
-            "sharpe": sharpe,
-        })
-
-
-threshold_trader_check = pd.DataFrame(rows)
-
-print(threshold_trader_check.to_string(index=False))
-# ======================= Use the MFIV score quantiles above as the threshold space ============================
-
-# ===== Does the threshold improvement survive the actual sequential trader? =====
-# ================================ TCN_SCORE_THRESHOLD_TRADER_CALIBRATION =====================================
-# =============================================================================================================
-
-sys.modules.pop("srcB.trader_testing_tcn", None)
-from srcB.trader_testing_tcn import testing_execute_trading_strategy
-
-THRESHOLDS = [
-    0.0,
-    float(scores_all.quantile(.70)),
-    float(scores_all.quantile(.80)),
-    float(scores_all.quantile(.85)),
-    float(scores_all.quantile(.90))
-]
-rows = []
-
-for threshold in THRESHOLDS:
-    for y in YEARS:
-
-        market = Market(
-            option_df=df_raw_by_year[y],
-            time_df=d_btc_raw_by_year[y],
-            starting_cash=100_000,
-            im_multiplier=0.15,
-            mm_buffer_rate=0.05,
-        )
-
-        snapshots, greek_tests = testing_execute_trading_strategy(
-            bt_year=y,
-            bt_quarter=None,
-            model="tcn_mfiv",
-            outputs_by_year=outputs_by_year,
-            market=market,
-            trader_cache=trader_cache,
-            run_by="year",
-            tcn_score_threshold=threshold
+            forward_hours = FORWARD_HOURS
         )
 
         equity = pd.Series(
@@ -898,7 +782,7 @@ threshold_trader_check = pd.DataFrame(rows)
 
 print(threshold_trader_check.to_string(index=False))
 
-
+# TCN_THREHSOLD = 0.013705
 
 # ==================================================================================================================
 # ======================================= NOTE =====================================================================
@@ -911,6 +795,18 @@ print(threshold_trader_check.to_string(index=False))
 # ======================================= OTHER NOTE ===============================================================
 # ==================================================================================================================
 
+# ALL STRATEGY DIAGNOSTICS, 
+# TCN SPECIFIC (TRADER DIAGNOSTICS),
+# and both TARGET PERFORMANCE: EXECUTED VS SKIPPED sections 
+# — do not rerun trading. They only analyze strategy_results, transactions, greek_tests, or the saved TCN targets.
+
+# The expensive trader executions are:
+# TESTING_MAIN_WITH_CACHE
+# Calls testing_execute_trading_strategy() once per year → 3 full trader runs.
+# First TCN SCORE THRESHOLD TRADER CALIBRATION
+# 5 thresholds × 3 years → 15 full trader runs.
+# Second duplicated TCN SCORE THRESHOLD TRADER CALIBRATION
+# Again 5 thresholds × 3 years → another 15 full trader runs.
 
 
 
@@ -925,65 +821,7 @@ print(threshold_trader_check.to_string(index=False))
 
 
 
-
-# ============================================= POST ESTIMATION ====================================================
-# ============================================= PLOTLY SPOT PLOT  ==================================================
-# ==================================================================================================================
-import pandas as pd
-import plotly.graph_objects as go
-MODELS_PLOTLY = ["garch", "garch_n_mfiv"]
-y = 2020
-price_df = d_btc_raw_by_year[y].copy()
-price_df = price_df.loc[~price_df.index.duplicated(keep="first")].sort_index()
-spot = pd.to_numeric(price_df["close"], errors="coerce")
-for MODEL in MODELS_PLOTLY:
-    snapshots = strategy_results[f"{MODEL}_{str(y)[2:]}"]["snapshots"]
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=spot.index, y=spot, mode="lines", name="Spot"))
-
-    previous_open = False
-    entry_time = None
-    entry_positions = []
-
-    for snap in snapshots:
-        now = pd.Timestamp(snap["time"]).floor("h")
-        positions = snap.get("positions", [])
-        currently_open = bool(positions)
-
-        if currently_open and not previous_open:
-            entry_time = now
-            entry_positions = positions.copy()
-
-        if not currently_open and previous_open:
-            exit_time = now
-
-            for position in entry_positions:
-                strike = position["strike"]
-
-                fig.add_trace(go.Scatter(
-                    x=[entry_time], y=[strike],
-                    mode="markers",
-                    marker={"size": 6},
-                    showlegend=False
-                ))
-
-                fig.add_trace(go.Scatter(
-                    x=[entry_time, exit_time],
-                    y=[strike, strike],
-                    mode="lines",
-                    line={"dash": "dot"},
-                    showlegend=False
-                ))
-            entry_time = None
-            entry_positions = []
-        previous_open = currently_open
-
-    fig.update_layout(
-        title=f"{MODEL} — {y}",
-        xaxis_title="Time",
-        yaxis_title="Spot / Strike",
-        hovermode="closest"
-    )
-    fig.update_xaxes(rangeslider_visible=True)
-    fig.show()
+# =================================================================================================
+# ============================================= TESTING DIFFERENT TARGETS  ========================
+# =================================================================================================
 
