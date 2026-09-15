@@ -51,4 +51,22 @@ for y in YEARS:
     d_btc_raw_by_year[y] = d_btc_raw_by_year[y].set_index(pd.to_datetime(d_btc_raw_by_year[y]["date_time"]))
     df_raw_by_year[y] = df_raw_by_year[y].set_index(pd.to_datetime(df_raw_by_year[y]["date_time"]))
 
-df_raw_by_year[2021].head(10).to_clipboard()
+
+# CHECKING LOWEST ACCEPTABLE QUANTITY
+bad_ratios = {}
+for y in YEARS:
+    df_raw_by_year[y]
+    is_acceptable = df_raw_by_year[y]["amount"] >= 0.1
+    bad_ratios[y] =  (~is_acceptable).sum()/df_raw_by_year[y]["amount"].count()
+bad_ratios
+
+
+#=============== PROJECT UNRELATED PYTHON FUNCTION CHECKS ===============
+nums = iter([10,20, 30])
+print(list(nums))
+
+# lets not destroy the original iterator.
+import itertools
+nums = iter([10, 20, 30])
+nums, inspector = itertools.tee(nums)
+print(list(inspector))

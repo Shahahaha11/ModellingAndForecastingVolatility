@@ -77,8 +77,10 @@ def _prepare_option_data(option_df):
 
     if "strike" not in option.columns:
         option["strike"] = option["instrument_name"].str.split("-").str[2].astype(float)
+
     if "type" not in option.columns:
         option["type"] = option["instrument_name"].str.split("-").str[3]
+
     if "maturity" not in option.columns:
         option["maturity"] = pd.to_datetime(
             option["instrument_name"].str.split("-").str[1],
@@ -86,14 +88,18 @@ def _prepare_option_data(option_df):
             utc=True,
         ).dt.floor("h")
     else:
-        option["maturity"] = pd.to_datetime(option["maturity"], utc=True).dt.floor("h")
+        option["maturity"] = pd.to_datetime(
+            option["maturity"],
+            utc=True
+        ).dt.floor("h")
 
-    option["price_per_contract"] = option["price"].astype(float) * option["index_price"].astype(float)
+    option["price_per_contract"] = (
+        option["price"].astype(float)
+        * option["index_price"].astype(float)
+    )
     option["iv"] = option["iv"].astype(float)
-
-    return option.drop_duplicates(
-        ["date_time", "instrument_name", "direction"], keep="first"
-    ).sort_values("date_time")
+    option["amount"] = option["amount"].astype(float)
+    return option.sort_values("date_time", kind="stable")
 
 
 def _prepare_time_data(time_df):
@@ -130,20 +136,48 @@ def _build_quote_groups(option):
     }
 
 
-def _next_quote(quote_groups, target_time, symbol, direction, expiry):
+def _next_quote(
+    quote_groups,
+    target_time,
+    symbol,
+    direction,
+    expiry,
+    quantity=0.1,
+):
     quotes = quote_groups.get((symbol, direction))
+
     if quotes is None or quotes.empty:
-        return None, None
+        return [], quantity
 
-    i = quotes.index.searchsorted(target_time)
-    if i >= len(quotes):
-        return None, None
+    quotes = quotes[
+        (quotes.index >= target_time)
+        & (quotes.index < expiry)
+    ]
 
-    quote_time = quotes.index[i]
-    if quote_time >= expiry:
-        return None, None
+    remaining = float(quantity)
+    fills = []
 
-    return quote_time, quotes.iloc[i]
+    for quote_time, row in quotes.iterrows():
+        available = float(row["amount"])
+
+        if not np.isfinite(available) or available <= 0:
+            continue
+
+        fill_qty = min(remaining, available)
+
+        fills.append({
+            "time": quote_time,
+            "row": row,
+            "quantity": fill_qty,
+        })
+
+        remaining -= fill_qty
+
+        if remaining <= 1e-12:
+            remaining = 0.0
+            break
+
+    return fills, remaining
 
 
 def _leg_pnl(
@@ -154,36 +188,60 @@ def _leg_pnl(
     strike = float(entry_row["strike"])
     expiry = pd.Timestamp(entry_row["maturity"])
 
+    quantity = 0.1
+
     spot0 = float(time_df.loc[now, close_col])
     entry_price = float(entry_row["price_per_contract"])
     entry_fee = _fee(float(entry_row["price"]), spot0)
 
     if direction == "buy":
-        pnl = -entry_price - entry_fee
+        pnl = (-entry_price - entry_fee) * quantity
     else:
-        pnl = entry_price - entry_fee
+        pnl = (entry_price - entry_fee) * quantity
 
-    # The intended holding horizon is target_exit_time. If the option expires first,
-    # settle exactly as Market.remove_expired().
+    # Expiry occurs before the intended holding horizon.
     if expiry <= target_exit_time:
         if expiry not in time_df.index:
             return np.nan, pd.NaT
 
         spot1 = float(time_df.loc[expiry, close_col])
-        payoff = max(spot1 - strike, 0.0) if right == "C" else max(strike - spot1, 0.0)
-        delivery_fee = min(0.00015 * spot1, 0.125 * payoff) if payoff > 0 else 0.0
-        pnl += payoff - delivery_fee if direction == "buy" else -payoff - delivery_fee
+        payoff = (
+            max(spot1 - strike, 0.0)
+            if right == "C"
+            else max(strike - spot1, 0.0)
+        )
+
+        delivery_fee = (
+            min(0.00015 * spot1, 0.125 * payoff)
+            if payoff > 0
+            else 0.0
+        )
+
+        if direction == "buy":
+            pnl += (payoff - delivery_fee) * quantity
+        else:
+            pnl += (-payoff - delivery_fee) * quantity
+
         return pnl, expiry
 
-    # Mirror Market.liquidate(): once the 24h holding period is reached, use the
-    # first later hour where the opposite-direction trade exists. If no such trade
-    # occurs before expiry, the position remains open and settles at expiry.
     opposite = "sell" if direction == "buy" else "buy"
-    exit_time, exit_row = _next_quote(
-        quote_groups, target_exit_time, symbol, opposite, expiry
+
+    fills, remaining = _next_quote(
+        quote_groups,
+        target_exit_time,
+        symbol,
+        opposite,
+        expiry,
+        quantity=quantity,
     )
 
-    if exit_row is not None:
+    last_exit_time = None
+
+    for fill in fills:
+        exit_time = fill["time"]
+        exit_row = fill["row"]
+        fill_qty = fill["quantity"]
+
         if exit_time not in time_df.index:
             return np.nan, pd.NaT
 
@@ -191,16 +249,36 @@ def _leg_pnl(
         exit_price = float(exit_row["price_per_contract"])
         exit_fee = _fee(float(exit_row["price"]), spot1)
 
-        pnl += exit_price - exit_fee if direction == "buy" else -exit_price - exit_fee
-        return pnl, exit_time
+        if direction == "buy":
+            pnl += (exit_price - exit_fee) * fill_qty
+        else:
+            pnl += (-exit_price - exit_fee) * fill_qty
+
+        last_exit_time = exit_time
+
+    if remaining == 0:
+        return pnl, last_exit_time
 
     if expiry not in time_df.index:
         return np.nan, pd.NaT
 
     spot1 = float(time_df.loc[expiry, close_col])
-    payoff = max(spot1 - strike, 0.0) if right == "C" else max(strike - spot1, 0.0)
-    delivery_fee = min(0.00015 * spot1, 0.125 * payoff) if payoff > 0 else 0.0
-    pnl += payoff - delivery_fee if direction == "buy" else -payoff - delivery_fee
+    payoff = (
+        max(spot1 - strike, 0.0)
+        if right == "C"
+        else max(strike - spot1, 0.0)
+    )
+
+    delivery_fee = (
+        min(0.00015 * spot1, 0.125 * payoff)
+        if payoff > 0
+        else 0.0
+    )
+
+    if direction == "buy":
+        pnl += (payoff - delivery_fee) * remaining
+    else:
+        pnl += (-payoff - delivery_fee) * remaining
 
     return pnl, expiry
 
@@ -208,36 +286,31 @@ def _leg_pnl(
 def _entry_contracts(snapshot, now, spot, rfr, exit_time, delta_target, action):
     direction = "buy" if action.startswith("long_") else "sell"
     structure = "straddle" if action.endswith("straddle") else "strangle"
-
-    # Match the actual trader: a long action only requires executable buy rows at
-    # entry; a short action only requires executable sell rows.
-    contracts = snapshot[snapshot["direction"] == direction].drop_duplicates(
-        "instrument_name"
-    )
+    contracts = snapshot[
+        (snapshot["direction"] == direction)
+        & (snapshot["amount"] >= 0.1)
+    ].drop_duplicates("instrument_name")
 
     expiries = sorted(
         x for x in contracts["maturity"].unique()
         if pd.Timestamp(x) >= exit_time
     )
-
     for expiry in expiries:
         expiry = pd.Timestamp(expiry)
         exp = contracts[contracts["maturity"] == expiry]
         calls = exp[exp["type"] == "C"]
         puts = exp[exp["type"] == "P"]
-
+        
         if calls.empty or puts.empty:
             continue
-
+        
         if structure == "straddle":
             common_strikes = sorted(set(calls["strike"]) & set(puts["strike"]))
             if not common_strikes:
                 continue
-
             atm_strike = min(common_strikes, key=lambda K: abs(K - spot))
             call = calls[calls["strike"] == atm_strike].iloc[0]
             put = puts[puts["strike"] == atm_strike].iloc[0]
-
             return {
                 "expiry": expiry,
                 "call": call,
@@ -246,9 +319,10 @@ def _entry_contracts(snapshot, now, spot, rfr, exit_time, delta_target, action):
 
         otm_calls = calls[calls["strike"] > spot]
         otm_puts = puts[puts["strike"] < spot]
+        
         if otm_calls.empty or otm_puts.empty:
             continue
-
+        
         call_choices = []
         for _, row in otm_calls.iterrows():
             d = _delta(
@@ -269,13 +343,12 @@ def _entry_contracts(snapshot, now, spot, rfr, exit_time, delta_target, action):
 
         if not call_choices or not put_choices:
             continue
-
+        
         return {
             "expiry": expiry,
             "call": min(call_choices, key=lambda x: x[0])[1],
             "put": min(put_choices, key=lambda x: x[0])[1],
         }
-
     return None
 
 

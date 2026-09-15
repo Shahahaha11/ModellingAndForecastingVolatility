@@ -18,7 +18,7 @@ class Instrument:
                  price_per_contract,
                  expiry,
                  option_price_btc,
-                 amount= 1.0
+                 amount= 0.1
                  ):
         self.Symbol = symbol
         self.Strike = strike
@@ -188,7 +188,47 @@ class Market:
         self.holdings.cash = self.cash
         self.calculate_margin_requirements()
     
-    def buy(self, instrument, qty=1):
+    def mock_trade(self, instrument, qty=0.1):
+        qty = float(qty)
+        exists = False
+        total_amount = 0.0
+        cash_change = 0.0
+
+        if qty <= 0 or qty > instrument.Amount:
+            return exists, total_amount, cash_change
+
+        fee = min(0.0003, 0.125 * instrument.OptionPriceBTC) * self.spot * qty
+
+        if instrument.Direction == "buy":
+            cash_change = -(instrument.Price * qty + fee)
+            
+            if self.get_free_liquidity() + cash_change < 0:
+                return exists, total_amount, cash_change
+
+        elif instrument.Direction == "sell":
+            cash_change = instrument.Price * qty - fee
+            new_initial_margin = self.spot * self.im_multiplier * qty
+            new_buffer_margin = self.spot * self.mm_buffer_rate * qty
+
+            if (
+                self.cash
+                + cash_change
+                - self.locked_initial_margin
+                - self.locked_buffer_margin
+                - new_initial_margin
+                - new_buffer_margin
+                < 0
+            ):
+                return exists, total_amount, cash_change
+
+        else:
+            return exists, total_amount, cash_change
+        exists = True
+        total_amount = instrument.Amount
+        return exists, total_amount, cash_change
+
+        
+    def buy(self, instrument, qty=0.1):
 
         qty = float(qty)
         if qty <= 0 or qty > instrument.Amount:
@@ -250,7 +290,7 @@ class Market:
         return order
 
 
-    def sell(self, instrument, qty=1):
+    def sell(self, instrument, qty=0.1):
 
         qty = float(qty)
         if qty <= 0 or qty > instrument.Amount:
@@ -492,33 +532,27 @@ class Market:
                 option_value += price_now * instrument.Amount
  
         return option_value
- 
+    # currently unused, but uses identical calculation to option_value().
+    # if it were to be used in the latter then it would carry the caveat of missing options with the same key due to next() usage.
     def pricer(self, key):
         strike, expiry, right, direction = key
- 
         if self.now is None:
             return 0.0
- 
         spot = self.close_price(n=1).iloc[-1]
         var = self.variance(n=60)
-        # r = 0.01
         r = float(self.time_df.loc[self.now, "rfr"])
- 
         if pd.isna(var) or var <= 0 or pd.isna(spot):
             return 0.0
- 
         instrument = next(
             (i for i in self.holdings.instruments
             if i.Strike == strike and i.Expiry == expiry and i.Right == right and
             i.Direction == direction),
             None
         )
- 
         if instrument is None:
-            return 0.0
- 
+            return 0.0 
         tau = (instrument.Expiry - self.now) / pd.Timedelta(days=365)
- 
+        
         if tau <= 0:
             if instrument.Right == "C":
                 price_now = max(spot - strike, 0.0)
@@ -535,15 +569,14 @@ class Market:
                 Nd2 = norm.cdf(d2)
                 Nd1_put = norm.cdf(-d1)
                 Nd2_put = norm.cdf(-d2)
- 
                 if instrument.Right == "C":
                     price_now = spot * Nd1 - strike * np.exp(-r * tau) * Nd2
                 else:
                     price_now = strike * np.exp(-r * tau) * Nd2_put - spot * Nd1_put
  
         if instrument.Direction == "sell":
-            return -price_now
+            return -price_now * instrument.Amount
         else:
-            return price_now 
+            return price_now * instrument.Amount
 
             

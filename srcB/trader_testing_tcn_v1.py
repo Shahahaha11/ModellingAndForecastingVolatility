@@ -1,5 +1,6 @@
-### NEW 07
-### VI + TCN
+### NEW 8
+# Result: TCN attempts to reach 10 matched quantity immediately, then at each of the next 3 hourly observations if the same TCN action remains active, without resetting the original 24-hour holding clock.
+
 
 import pandas as pd
 import numpy as np
@@ -149,7 +150,7 @@ def testing_execute_trading_strategy(
 
         contracts = market.current[
             (market.current["direction"] == direction)
-            & (market.current["amount"] >= 1)
+            & (market.current["amount"] >= 0.1)
         ].drop_duplicates("instrument_name")
         
         expiries = sorted(
@@ -279,7 +280,7 @@ def testing_execute_trading_strategy(
                     if (
                         instrument.Symbol == call_symbol
                         and instrument.Direction == direction
-                        and instrument.Amount >= 1
+                        and instrument.Amount >= 0.1
                     )
                 ),
                 None
@@ -291,7 +292,7 @@ def testing_execute_trading_strategy(
                     if (
                         instrument.Symbol == put_symbol
                         and instrument.Direction == direction
-                        and instrument.Amount >= 1
+                        and instrument.Amount >= 0.1
                     )
                 ),
                 None
@@ -489,10 +490,27 @@ def testing_execute_trading_strategy(
                 continue
 
         if complete_position:
-            market.record_equity()
-            save_snapshot(now)
-            continue
 
+            if model == "tcn_mfiv":
+                tcn_position_qty = (call_count if short_position else long_call_count)
+
+                if (tcn_position_qty >= float(quantity)
+                    or entry_time is None
+                    or now > entry_time + pd.Timedelta(hours=3)):
+                    market.record_equity()
+                    save_snapshot(now)
+                    continue
+
+            elif model == "garch":
+                garch_position_qty = (call_count if short_position else long_call_count)
+
+                if (garch_position_qty >= float(quantity)
+                    or entry_time is None
+                    or now > entry_time + pd.Timedelta(hours=3)):
+                    market.record_equity()
+                    save_snapshot(now)
+                    continue
+            
         # ---------------------------------------------------------
         # TCN ENTRY
         # ---------------------------------------------------------
@@ -522,6 +540,10 @@ def testing_execute_trading_strategy(
                 market.record_equity()
                 save_snapshot(now)
                 continue
+            if has_position and action_now != position_side:
+                market.record_equity()
+                save_snapshot(now)
+                continue
 
             selected = tcn_entry_contracts(
                 now,
@@ -534,39 +556,88 @@ def testing_execute_trading_strategy(
                 market.record_equity()
                 save_snapshot(now)
                 continue
-
+            # ADD STARTS
             selected_call, selected_put = selected
-            before_count = len(market.holdings.instruments)
 
-            if action_now.startswith("long_"):
-                market.buy(selected_call, qty=1)
-                market.buy(selected_put, qty=1)
-            else:
-                market.sell(selected_call, qty=1)
-                market.sell(selected_put, qty=1)
+            existing_qty = (
+                call_count if action_now.startswith("short_")
+                else long_call_count
+            )
 
-            after_count = len(market.holdings.instruments)
+            quantity_left = float(quantity) - existing_qty
 
-            if after_count - before_count != 2:
-                if liquidate_all():
-                    reset_position_state()
+            pair_qty = min(
+                selected_call.Amount,
+                selected_put.Amount,
+                quantity_left
+            )
+
+            if pair_qty < 0.1:
                 market.record_equity()
                 save_snapshot(now)
                 continue
 
-            entered_day = now.date()
-            position_side = action_now
-            entry_time = now
-            position_hold_hours = forward_hours
-            entry_selected_horizon = forward_hours
-            entry_lower_boundary = None
-            entry_upper_boundary = None
+            call_exists, _, call_cash_change = market.mock_trade(
+                selected_call, qty=pair_qty
+            )
 
-            if "MFIV_24" in out_full.columns:
-                mfiv_value = float(out_full.loc[now, "MFIV_24"])
-                entry_mfiv = mfiv_value if np.isfinite(mfiv_value) else None
+            put_exists, _, put_cash_change = market.mock_trade(
+                selected_put, qty=pair_qty
+            )
+
+            if action_now.startswith("long_"):
+
+                trade_exists = (
+                    call_exists
+                    and put_exists
+                    and market.get_free_liquidity()
+                    + call_cash_change
+                    + put_cash_change >= 0
+                )
+
             else:
-                entry_mfiv = None
+                new_margin = (
+                    market.spot
+                    * (market.im_multiplier + market.mm_buffer_rate)
+                    * pair_qty
+                    * 2
+                )
+
+                trade_exists = (
+                    call_exists
+                    and market.get_free_liquidity()
+                    + call_cash_change
+                    + put_cash_change
+                    - new_margin >= 0
+                )
+
+            if not trade_exists:
+                market.record_equity()
+                save_snapshot(now)
+                continue
+
+            if action_now.startswith("long_"):
+                market.buy(selected_call, qty=pair_qty)
+                market.buy(selected_put, qty=pair_qty)
+            else:
+                market.sell(selected_call, qty=pair_qty)
+                market.sell(selected_put, qty=pair_qty)
+            # END
+            if entry_time is None:
+
+                entered_day = now.date()
+                position_side = action_now
+                entry_time = now
+                position_hold_hours = forward_hours
+                entry_selected_horizon = forward_hours
+                entry_lower_boundary = None
+                entry_upper_boundary = None
+
+                if "MFIV_24" in out_full.columns:
+                    mfiv_value = float(out_full.loc[now, "MFIV_24"])
+                    entry_mfiv = mfiv_value if np.isfinite(mfiv_value) else None
+                else:
+                    entry_mfiv = None
 
             call_iv = float(
                 market.current.loc[
@@ -650,11 +721,20 @@ def testing_execute_trading_strategy(
         long_entry_signal = ( s_now >= q_hi and 11 <= hour < 15 )
         short_entry_signal = ( s_now <= q_lo and 11 <= hour < 15 )
 
-        if not ( long_entry_signal or short_entry_signal):
+        if has_position and (
+            (active_position_side == "long_straddle" and not long_entry_signal)
+            or
+            (active_position_side == "short_strangle" and not short_entry_signal)
+        ):
             market.record_equity()
             save_snapshot(now)
             continue
 
+        if not ( long_entry_signal or short_entry_signal):
+            market.record_equity()
+            save_snapshot(now)
+            continue
+        
         last_five = market.close_price(n=5)
 
         if last_five.empty:
@@ -672,7 +752,7 @@ def testing_execute_trading_strategy(
                 if (
                     instrument.Right == "C"
                     and instrument.Direction == "buy"
-                    and instrument.Amount >= 1
+                    and instrument.Amount >= 0.1
                 )
             ]
 
@@ -680,7 +760,7 @@ def testing_execute_trading_strategy(
                 if (
                     instrument.Right == "P"
                     and instrument.Direction == "buy"
-                    and instrument.Amount >= 1
+                    and instrument.Amount >= 0.1
                 )
             ]
 
@@ -760,90 +840,110 @@ def testing_execute_trading_strategy(
                 save_snapshot(now)
                 continue
 
-            before_count = len(market.holdings.instruments)
+            quantity_left = float(quantity) - long_call_count
 
-            market.buy( long_call, qty=1 )
-            market.buy( long_put, qty=1 )
+            pair_qty = min(
+                long_call.Amount,
+                long_put.Amount,
+                quantity_left
+            )
 
-            after_count = len( market.holdings.instruments )
+            if pair_qty < 0.1:
+                market.record_equity()
+                save_snapshot(now)
+                continue
 
-            if ( after_count - before_count == 2):
+            call_exists, _, call_cash_change = market.mock_trade(
+                long_call, qty=pair_qty
+            )
+
+            put_exists, _, put_cash_change = market.mock_trade(
+                long_put, qty=pair_qty
+            )
+
+            trade_exists = (
+                call_exists
+                and put_exists
+                and market.get_free_liquidity()
+                + call_cash_change
+                + put_cash_change >= 0
+            )
+
+            if not trade_exists:
+                market.record_equity()
+                save_snapshot(now)
+                continue
+
+            market.buy( long_call, qty=pair_qty )
+            market.buy( long_put, qty=pair_qty )
+
+            if entry_time is None:
                 entered_day = now.date()
                 position_side = ("long_straddle")
                 entry_time = now
                 position_hold_hours = (hold_days * 24)
 
-                greek_tests.append({
-                    "time": now,
-                    "signal": s_now,
-                    "q_lo": q_lo,
-                    "selected_calls": [long_call],
-                    "selected_puts": [long_put],
-                    "call_ivs": [
-                        float(market.current.loc[
-                            (market.current["instrument_name"] == long_call.Symbol)
-                            & (market.current["direction"] == long_call.Direction),
-                            "iv"
-                        ].iloc[0])
-                    ],
-                    "put_ivs": [
-                        float(market.current.loc[
-                            (market.current["instrument_name"] == long_put.Symbol)
-                            & (market.current["direction"] == long_put.Direction),
-                            "iv"
-                        ].iloc[0])
-                    ],
-                    "spot": float(market.spot),
-                    "rfr": float(market.time_df.loc[now, "rfr"])
-                })
+            greek_tests.append({
+                "time": now,
+                "signal": s_now,
+                "q_lo": q_lo,
+                "selected_calls": [long_call],
+                "selected_puts": [long_put],
+                "call_ivs": [
+                    float(market.current.loc[
+                        (market.current["instrument_name"] == long_call.Symbol)
+                        & (market.current["direction"] == long_call.Direction),
+                        "iv"
+                    ].iloc[0])
+                ],
+                "put_ivs": [
+                    float(market.current.loc[
+                        (market.current["instrument_name"] == long_put.Symbol)
+                        & (market.current["direction"] == long_put.Direction),
+                        "iv"
+                    ].iloc[0])
+                ],
+                "spot": float(market.spot),
+                "rfr": float(market.time_df.loc[now, "rfr"])
+            })
 
-                d1, d2 = get_d1_d2(
-                    now, market.spot, long_call.Strike,
-                    greek_tests[-1]["rfr"], greek_tests[-1]["call_ivs"][0], long_call.Expiry
+            d1, d2 = get_d1_d2(
+                now, market.spot, long_call.Strike,
+                greek_tests[-1]["rfr"], greek_tests[-1]["call_ivs"][0], long_call.Expiry
+            )
+
+            greek_tests[-1]["call_greeks"] = [{
+                "delta": get_delta(d1, long_call.Right, long_call.Direction),
+                "gamma": get_gamma(
+                    d1, long_call.Right, now, market.spot,
+                    greek_tests[-1]["call_ivs"][0], long_call.Expiry, long_call.Direction
                 )
+            }]
 
-                greek_tests[-1]["call_greeks"] = [{
-                    "delta": get_delta(d1, long_call.Right, long_call.Direction),
-                    "gamma": get_gamma(
-                        d1, long_call.Right, now, market.spot,
-                        greek_tests[-1]["call_ivs"][0], long_call.Expiry, long_call.Direction
-                    )
-                }]
+            d1, d2 = get_d1_d2(
+                now, market.spot, long_put.Strike,
+                greek_tests[-1]["rfr"], greek_tests[-1]["put_ivs"][0], long_put.Expiry
+            )
 
-                d1, d2 = get_d1_d2(
-                    now, market.spot, long_put.Strike,
-                    greek_tests[-1]["rfr"], greek_tests[-1]["put_ivs"][0], long_put.Expiry
+            greek_tests[-1]["put_greeks"] = [{
+                "delta": get_delta(d1, long_put.Right, long_put.Direction),
+                "gamma": get_gamma(
+                    d1, long_put.Right, now, market.spot,
+                    greek_tests[-1]["put_ivs"][0], long_put.Expiry, long_put.Direction
                 )
-                greek_tests[-1]["put_greeks"] = [{
-                    "delta": get_delta(d1, long_put.Right, long_put.Direction),
-                    "gamma": get_gamma(
-                        d1, long_put.Right, now, market.spot,
-                        greek_tests[-1]["put_ivs"][0], long_put.Expiry, long_put.Direction
-                    )
-                }]
-
-            else:
-                if liquidate_all():
-                    reset_position_state()
+            }]
 
             market.record_equity()
             save_snapshot(now)
             continue
-
         # ---------------------------------------------------------
         # GARCH STRIKE BOUNDARIES
         # ---------------------------------------------------------
 
-        strike_horizon = None
-        mfiv_now = None
 
-        historical_vol_now = float(
-            garch_historical_vol.loc[now]
-        )
+        historical_vol_now = float(garch_historical_vol.loc[now])
 
-        garch_now = float(
-            garch_series.loc[now]
-        )
+        garch_now = float(garch_series.loc[now])
 
         if (
             not np.isfinite(historical_vol_now)
@@ -875,7 +975,7 @@ def testing_execute_trading_strategy(
                 and instrument.Direction == "sell"
                 and instrument.Strike >= upper_boundary
                 and pd.Timedelta(days=1) <= instrument.Expiry - now <= pd.Timedelta(days=expiry_days)
-                and instrument.Amount >= 1
+                and instrument.Amount >= 0.1
             )
         ]
 
@@ -888,7 +988,7 @@ def testing_execute_trading_strategy(
                 and instrument.Direction == "sell"
                 and instrument.Strike <= lower_boundary
                 and pd.Timedelta(days=1) <= instrument.Expiry - now <= pd.Timedelta(days=expiry_days)
-                and instrument.Amount >= 1
+                and instrument.Amount >= 0.1
             )
         ]
 
@@ -926,8 +1026,8 @@ def testing_execute_trading_strategy(
             )
 
             if expiry_calls and expiry_puts:
-                selected_calls = expiry_calls[:quantity]
-                selected_puts = expiry_puts[:quantity]
+                selected_calls = expiry_calls
+                selected_puts = expiry_puts
                 break
 
         if not selected_calls or not selected_puts:
@@ -947,7 +1047,7 @@ def testing_execute_trading_strategy(
                         if instrument.Expiry == call_expiry
                     ],
                     key=lambda instrument: instrument.Strike
-                )[:quantity]
+                )
 
             if acceptable_puts:
                 put_expiry = min(
@@ -963,69 +1063,73 @@ def testing_execute_trading_strategy(
                     ],
                     key=lambda instrument: instrument.Strike,
                     reverse=True
-                )[:quantity]
+                )
 
-        pair_count = min(len(selected_calls), len(selected_puts), quantity)
-
-        if pair_count == 0:
+        if not selected_calls or not selected_puts:
             market.record_equity()
             save_snapshot(now)
             continue
 
-        selected_calls = selected_calls[:pair_count]
-        selected_puts = selected_puts[:pair_count]
+        selected_call = selected_calls[0]
+        selected_put = selected_puts[0]
 
-        before_call_count = call_count
-        before_put_count = put_count
+        quantity_left = float(quantity) - call_count
 
-        for instrument in selected_calls:
-            market.sell(instrument, qty=1)
-
-        for instrument in selected_puts:
-            market.sell( instrument, qty=1 )
-
-        holdings_after = list(market.holdings.instruments)
-
-        call_count_after = sum(
-            instrument.Amount
-            for instrument in holdings_after
-            if (
-                instrument.Right == "C"
-                and instrument.Direction == "sell"
-            )
+        pair_qty = min(
+            selected_call.Amount,
+            selected_put.Amount,
+            quantity_left
         )
 
-        put_count_after = sum(
-            instrument.Amount
-            for instrument in holdings_after
-            if (
-                instrument.Right == "P"
-                and instrument.Direction == "sell"
-            )
-        )
-        calls_added = (call_count_after - before_call_count)
-        puts_added = (put_count_after - before_put_count)
-
-        if calls_added <= 0 or puts_added <= 0 or calls_added != puts_added:
-            if liquidate_all():
-                reset_position_state()
+        if pair_qty < 0.1:
             market.record_equity()
             save_snapshot(now)
             continue
 
-        entered_day = now.date()
-        position_side = "short_strangle"
-        entry_time = now
+        selected_calls = [selected_call]
+        selected_puts = [selected_put]
 
-        position_hold_hours = hold_days * 24
+        call_exists, _, call_cash_change = market.mock_trade(
+            selected_call, qty=pair_qty
+        )
 
-        entry_selected_horizon = (strike_horizon)
+        _, _, put_cash_change = market.mock_trade(
+            selected_put, qty=pair_qty
+        )
 
-        entry_mfiv = mfiv_now
+        new_margin = (
+            market.spot
+            * (market.im_multiplier + market.mm_buffer_rate)
+            * pair_qty
+            * 2
+        )
 
-        entry_lower_boundary = (lower_boundary)
+        trade_exists = (
+            call_exists
+            and market.get_free_liquidity()
+            + call_cash_change
+            + put_cash_change
+            - new_margin >= 0
+        )
 
-        entry_upper_boundary = (upper_boundary)
+        if not trade_exists:
+            market.record_equity()
+            save_snapshot(now)
+            continue
+
+        market.sell(selected_call, qty=pair_qty)
+        market.sell(selected_put, qty=pair_qty)
+        if entry_time is None:
+            entered_day = now.date()
+            position_side = "short_strangle"
+            entry_time = now
+
+            position_hold_hours = hold_days * 24
+
+            entry_selected_horizon = (strike_horizon)
+            entry_mfiv = mfiv_now
+            entry_lower_boundary = (lower_boundary)
+            entry_upper_boundary = (upper_boundary)
 
         greek_tests.append({
             "time": now,
