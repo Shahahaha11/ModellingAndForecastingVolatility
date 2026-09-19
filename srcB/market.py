@@ -86,7 +86,7 @@ class Market:
             self.option["instrument_name"].str.split("-").str[1], format="%d%b%y").dt.tz_localize("UTC").dt.floor("h")
         self.option["price_per_contract"] = self.option["price"] * self.option["index_price"]
  
-        self.option["date_time"] = pd.to_datetime(self.option["date_time"]).dt.tz_localize("UTC").dt.floor("h")
+        self.option["date_time"] = pd.to_datetime(self.option["date_time"], utc=True).dt.ceil("h")
     
         self.orders = []
         self.transactions = []

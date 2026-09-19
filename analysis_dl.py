@@ -736,4 +736,48 @@ print(threshold_trader_check.to_string(index=False))
 # =============================================================================================================
 # Select the final dl_score_threshold only after inspecting the sequential trader table above.
 # Prefer a threshold that improves performance robustly across calibration years while retaining a credible trade count.
-# FINAL SELECTION: dl_score_threshold = 0.00000
+# FINAL SELECTION:DL_SCORE_THRESHOLD = 0.0
+
+
+
+
+
+with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/hyperparameters/tcn_study.pkl", "rb") as f:
+    tcn_study = pickle.load(f)
+df = tcn_study.trials_dataframe()
+df = df[df["state"] == "COMPLETE"].sort_values("number")
+df["best_so_far"] = df["value"].cummin()
+print("TCN")
+print(df[["number", "value", "best_so_far"]].to_string(index=False))
+
+with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/hyperparameters/gru_study.pkl", "rb") as f:
+    gru_study = pickle.load(f)
+df = gru_study.trials_dataframe()
+df = df[df["state"] == "COMPLETE"].sort_values("number")
+df["best_so_far"] = df["value"].cummin()
+print("GRU")
+print(df[["number", "value", "best_so_far"]].to_string(index=False))
+
+with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/hyperparameters/tsm_study.pkl", "rb") as f:
+    tsm_study = pickle.load(f)
+df = tsm_study.trials_dataframe()
+df = df[df["state"] == "COMPLETE"].sort_values("number")
+df["best_so_far"] = df["value"].cummin()
+print("TSM")
+print(df[["number", "value", "best_so_far"]].to_string(index=False))
+
+with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/hyperparameters/itr_study.pkl", "rb") as f:
+    itr_study = pickle.load(f)
+df = itr_study.trials_dataframe()
+df = df[df["state"] == "COMPLETE"].sort_values("number")
+df["best_so_far"] = df["value"].cummin()
+print("ITR")
+print(df[["number", "value", "best_so_far"]].to_string(index=False))
+
+with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/hyperparameters/dl_study.pkl", "rb") as f:
+    dl_study = pickle.load(f)
+df = dl_study.trials_dataframe()
+df = df[df["state"] == "COMPLETE"].sort_values("number")
+df["best_so_far"] = df["value"].cummin()
+print("DL")
+print(df[["number", "value", "best_so_far"]].to_string(index=False))

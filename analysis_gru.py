@@ -161,6 +161,22 @@ with open(
 
 SEED = 11
 FORWARD_HOURS = 96
+
+
+# ======================================= CHECK HPO RESULTS =================================================
+# with open(
+#     "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/hyperparameters/gru_study.pkl","rb"
+# ) as f:
+#     gru_study = pickle.load(f)
+
+# print(gru_study.best_value)
+# print(gru_study.best_params)
+
+# df = gru_study.trials_dataframe()
+
+# print(df.groupby("params_hidden_size")["value"].agg(["mean", "min", "count"]))
+# print(df.groupby("params_batch_size")["value"].agg(["mean", "min", "count"]))
+
 # =============================================================================================================
 # ======================================= YEARLY_GRU_ESTIMATION ===============================================
 # =============================================================================================================
@@ -670,72 +686,8 @@ threshold_check = pd.DataFrame(rows)
 print(threshold_check.to_string(index=False))
 
 
-# =============================================================================================================
-# ================================ GRU SCORE THRESHOLD TRADER CALIBRATION =====================================
-# =============================================================================================================
-# Question: does score filtering improve the actual sequential trader?
-# Same five-candidate search budget as the TCN: baseline + pooled 70/80/85/90 percentiles.
-
-THRESHOLDS = [
-    0.0,
-    float(scores_all.quantile(.70)),
-    float(scores_all.quantile(.80)),
-    float(scores_all.quantile(.85)),
-    float(scores_all.quantile(.90))
-]
-
-rows = []
-
-for threshold in THRESHOLDS:
-    for y in YEARS:
-
-        market = Market(
-            option_df=df_raw_by_year[y],
-            time_df=d_btc_raw_by_year[y],
-            starting_cash=100_000,
-            im_multiplier=0.15,
-            mm_buffer_rate=0.05,
-        )
-
-        snapshots, greek_tests = testing_execute_trading_strategy(
-            bt_year=y,
-            bt_quarter=None,
-            model="tcn_mfiv",
-            outputs_by_year=outputs_by_year,
-            market=market,
-            trader_cache=trader_cache,
-            run_by="year",
-            tcn_score_threshold=threshold,
-            forward_hours = FORWARD_HOURS
-        )
-
-        equity = pd.Series(
-            [s["equity"] for s in snapshots],
-            index=[s["time"] for s in snapshots]
-        )
-
-        returns = equity.pct_change().dropna()
-        sharpe = returns.mean() / returns.std() * np.sqrt(24 * 365)
-
-        rows.append({
-            "threshold": threshold,
-            "year": y,
-            "trades": len(greek_tests),
-            "sharpe": sharpe
-        })
-
-threshold_trader_check = pd.DataFrame(rows)
-print(threshold_trader_check.to_string(index=False))
-
-
+2
 # =============================================================================================================
 # ======================================= NOTE =================================================================
 # =============================================================================================================
-# Select the final gru_score_threshold only after inspecting the sequential trader table above.
-# Prefer a threshold that improves performance robustly across calibration years while retaining a credible trade count.
-# The last table tells me that GRU's score is not providing sufficiently stable incremental filtering information in the sequential trader.
-# Hence 0.00 is the best choice.
-# So 0.008781 does improve 2019 and 2021, and even improves the worst-year Sharpe. 
-# But it cuts 2020 Sharpe almost in half and removes about 43% of the trades without improving the overall average.
 # FINAL SELECTION: gru_score_threshold = 0.00
-

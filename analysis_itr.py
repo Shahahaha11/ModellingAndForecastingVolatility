@@ -747,5 +747,5 @@ print(threshold_trader_check.to_string(index=False))
 # =============================================================================================================
 # Select the final itr_score_threshold only after inspecting the sequential trader table above.
 # Prefer a threshold that improves performance robustly across calibration years while retaining a credible trade count.
-# FINAL SELECTION: itr_score_threshold = 0.023819
+# FINAL SELECTION: ITR_SCORE_THRESHOLD = 0.0
 

@@ -74,7 +74,7 @@ def build_dl_features(
 
 def _prepare_option_data(option_df):
     option = option_df.copy().reset_index(drop=True)
-    option["date_time"] = pd.to_datetime(option["date_time"], utc=True).dt.floor("h")
+    option["date_time"] = pd.to_datetime(option["date_time"], utc=True).dt.ceil("h")
 
     if "strike" not in option.columns:
         option["strike"] = option["instrument_name"].str.split("-").str[2].astype(float)
@@ -105,8 +105,8 @@ def _prepare_option_data(option_df):
 
 def _prepare_time_data(time_df):
     time_df = time_df.copy()
-    time_df.index = pd.to_datetime(time_df.index, utc=True).floor("h")
-    time_df = time_df.loc[~time_df.index.duplicated(keep="first")].sort_index()
+    time_df.index = pd.to_datetime(time_df.index, utc=True).ceil("h")
+    time_df = time_df.loc[~time_df.index.duplicated(keep="last")].sort_index()
     close_col = "close" if "close" in time_df.columns else "Close"
     return time_df, close_col
 

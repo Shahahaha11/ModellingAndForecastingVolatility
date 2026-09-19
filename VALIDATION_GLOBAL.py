@@ -154,11 +154,11 @@ for y in YEARS:
 
 TCN_SCORE_THRESHOLD = 0.000
 GRU_SCORE_THRESHOLD = 0.000
-TSM_SCORE_THRESHOLD = 0.003539
-ITR_SCORE_THRESHOLD = 0.009316
+TSM_SCORE_THRESHOLD = 0.001674
+ITR_SCORE_THRESHOLD = 0.000
 DL_SCORE_THRESHOLD = 0.000
 
-FORWARD_HOURS = 96
+FORWARD_HOURS = 24
 
 # =============================================================================================================
 # ======================================= LOAD FROZEN MODEL BUNDLES ===========================================
