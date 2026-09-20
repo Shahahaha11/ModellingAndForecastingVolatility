@@ -162,7 +162,7 @@ with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/hyperparam
     best_tsm_params = pickle.load(f)
 
 SEED = 42
-FORWARD_HOURS = 96
+FORWARD_HOURS = 24
 
 # =============================================================================================================
 # ======================================= YEARLY_TSM_ESTIMATION ===============================================
@@ -732,4 +732,4 @@ print(threshold_trader_check.to_string(index=False))
 # =============================================================================================================
 # Select the final tsm_score_threshold only after inspecting the sequential trader table above.
 # Prefer a threshold that improves performance robustly across calibration years while retaining a credible trade count.
-# FINAL SELECTION: TSM_SCORE_THRESHOLD =  0.001674
+# FINAL SELECTION: SCORE_THRESHOLD = 0.000775

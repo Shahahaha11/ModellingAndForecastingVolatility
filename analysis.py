@@ -127,7 +127,7 @@ for y in YEARS:
 with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/hyperparameters/tcn_best_params.pkl", "rb") as f:
     best_tcn_params = pickle.load(f)
 
-FORWARD_HOURS = 96
+FORWARD_HOURS = 24
 # # ======================================= YEARLY_TCN_ESTIMATION  ===================================================
 # # ==================================================================================================================
 sys.modules.pop("srcB.tcn_model_mfiv", None)
@@ -653,7 +653,7 @@ print(threshold_trader_check.to_string(index=False))
 # ======================================= NOTE =====================================================================
 # ==================================================================================================================
 
-# TCN_SCORE_THRESHOLD = 0.0
+# TCN_SCORE_THRESHOLD = 0.000693
 # No positive threshold improves Sharpe consistently across all three IS years.
 # 0.001823 only improves 2019; the others mostly deteriorate performance.
 

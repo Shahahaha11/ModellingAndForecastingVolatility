@@ -160,7 +160,7 @@ with open(
     best_gru_params = pickle.load(f)
 
 SEED = 11
-FORWARD_HOURS = 96
+FORWARD_HOURS = 24
 
 
 # ======================================= CHECK HPO RESULTS =================================================
@@ -211,7 +211,8 @@ for y in YEARS:
         hidden_size=best_gru_params["hidden_size"],
         num_layers=best_gru_params["num_layers"],
         dropout=best_gru_params["dropout"],
-        epochs=best_gru_params["epochs_by_year"][y],
+        # epochs=best_gru_params["epochs_by_year"][y],
+        epochs= 40,
         batch_size=best_gru_params["batch_size"],
         learning_rate=best_gru_params["learning_rate"],
         weight_decay=best_gru_params["weight_decay"],
@@ -329,7 +330,24 @@ if RUN_BY == "year":
 else:
     PERIODS = [(y, q) for y in YEARS for q in QUARTERS]
 
+### DELTE CHECK
+x = pd.concat([
+    outputs_by_year[2019][q][["gru_action", "gru_best_score"]]
+    for q in QUARTERS
+]).sort_index()
 
+print(x["gru_action"].value_counts(dropna=False))
+print(x.loc[x["gru_action"] != "no_trade", "gru_best_score"].describe())
+
+score_cols = [
+    "gru_long_straddle",
+    "gru_short_straddle",
+    "gru_long_strangle",
+    "gru_short_strangle"
+]
+x = gru_output_by_year[2019][score_cols]
+print(x.describe())
+print(x.max(axis=1).describe())
 # =============================================================================================================
 # ======================================= TESTING_MAIN_WITH_CACHE =============================================
 # =============================================================================================================
@@ -686,8 +704,67 @@ threshold_check = pd.DataFrame(rows)
 print(threshold_check.to_string(index=False))
 
 
-2
+# 5===== Does the threshold improvement survive the actual sequential trader? =====
+# ================================ GRU_SCORE_THRESHOLD_TRADER_CALIBRATION =====================================
+# =============================================================================================================
+
+sys.modules.pop("srcB.trader_testing_tcn_v1", None)
+from srcB.trader_testing_tcn_v1 import testing_execute_trading_strategy
+
+THRESHOLDS = [
+    0.0,
+    float(scores_all.quantile(.70)),
+    float(scores_all.quantile(.80)),
+    float(scores_all.quantile(.85)),
+    float(scores_all.quantile(.90))
+]
+rows = []
+
+for threshold in THRESHOLDS:
+    for y in YEARS:
+
+        market = Market(
+            option_df=df_raw_by_year[y],
+            time_df=d_btc_raw_by_year[y],
+            starting_cash=100_000,
+            im_multiplier=0.15,
+            mm_buffer_rate=0.05,
+        )
+
+        snapshots, greek_tests = testing_execute_trading_strategy(
+            bt_year=y,
+            bt_quarter=None,
+            model="tcn_mfiv",
+            outputs_by_year=outputs_by_year,
+            market=market,
+            trader_cache=trader_cache,
+            run_by="year",
+            tcn_score_threshold=threshold,
+            forward_hours=FORWARD_HOURS
+        )
+
+        equity = pd.Series(
+            [s["equity"] for s in snapshots],
+            index=[s["time"] for s in snapshots]
+        )
+
+        returns = equity.pct_change().dropna()
+        sharpe = returns.mean() / returns.std() * np.sqrt(24 * 365)
+
+        rows.append({
+            "threshold": threshold,
+            "year": y,
+            "trades": len(greek_tests),
+            "sharpe": sharpe
+        })
+
+threshold_trader_check = pd.DataFrame(rows)
+
+print(threshold_trader_check.to_string(index=False))
+
+
 # =============================================================================================================
 # ======================================= NOTE =================================================================
 # =============================================================================================================
-# FINAL SELECTION: gru_score_threshold = 0.00
+# FINAL SELECTION: GRU_SCORE_THRESHOLD = 0.000631
+

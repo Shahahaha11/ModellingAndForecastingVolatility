@@ -152,11 +152,11 @@ for y in YEARS:
 # ======================================= FROZEN MODEL SPECIFICATIONS =========================================
 # =============================================================================================================
 
-TCN_SCORE_THRESHOLD = 0.000
-GRU_SCORE_THRESHOLD = 0.000
-TSM_SCORE_THRESHOLD = 0.001674
+TCN_SCORE_THRESHOLD = 0.000693
+GRU_SCORE_THRESHOLD = 0.000631
+TSM_SCORE_THRESHOLD = 0.000775
 ITR_SCORE_THRESHOLD = 0.000
-DL_SCORE_THRESHOLD = 0.000
+DL_SCORE_THRESHOLD  = 0.000694
 
 FORWARD_HOURS = 24
 

@@ -159,7 +159,7 @@ with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/hyperparam
     best_itr_params = pickle.load(f)
 
 SEED = 42
-FORWARD_HOURS = 96
+FORWARD_HOURS = 24
 
 # =============================================================================================================
 # ======================================= YEARLY_ITR_ESTIMATION ===============================================
@@ -747,5 +747,5 @@ print(threshold_trader_check.to_string(index=False))
 # =============================================================================================================
 # Select the final itr_score_threshold only after inspecting the sequential trader table above.
 # Prefer a threshold that improves performance robustly across calibration years while retaining a credible trade count.
-# FINAL SELECTION: ITR_SCORE_THRESHOLD = 0.0
+# FINAL SELECTION: ITR_SCORE_THRESHOLD = 0.0000
 
