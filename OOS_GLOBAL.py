@@ -408,7 +408,99 @@ for q in QUARTERS:
         outputs_by_year_OOS[PREDICT_YEAR][q].index
     )
 
+# =============================================================================================================
+# ======================================= OOS 2023 TRADER ======================================================
+# =============================================================================================================
 
+PREDICT_YEAR = 2023
+
+for MODEL, config in MODEL_CONFIGS.items():
+
+    for q in QUARTERS:
+        outputs_by_year_OOS[PREDICT_YEAR][q]["tcn_action"] = outputs_by_year_OOS[PREDICT_YEAR][q][
+            config["action_col"]
+        ]
+
+        outputs_by_year_OOS[PREDICT_YEAR][q]["tcn_best_score"] = outputs_by_year_OOS[PREDICT_YEAR][q][
+            config["score_col"]
+        ]
+
+
+    trader_cache = {
+        PREDICT_YEAR: pd.concat(
+            [outputs_by_year_OOS[PREDICT_YEAR][q] for q in QUARTERS]
+        ).sort_index()
+    }
+
+
+    market = Market(
+        option_df=df_raw_by_year[PREDICT_YEAR],
+        time_df=d_btc_raw_by_year[PREDICT_YEAR],
+        starting_cash=100_000,
+        im_multiplier=0.15,
+        mm_buffer_rate=0.05,
+    )
+
+
+    snapshots, greek_tests = testing_execute_trading_strategy(
+        bt_year=PREDICT_YEAR,
+        bt_quarter=None,
+        model="tcn_mfiv",
+        outputs_by_year=outputs_by_year_OOS,
+        market=market,
+        trader_cache=trader_cache,
+        run_by="year",
+        tcn_score_threshold=config["threshold"],
+        forward_hours=FORWARD_HOURS
+    )
+
+    history_key = f"{MODEL}_{str(PREDICT_YEAR)[2:]}"
+
+    equity_curve = market.get_equity_history()
+
+    strategy_results[history_key] = {
+        "equity_curve": equity_curve,
+        "snapshots": snapshots,
+        "greek_tests": greek_tests,
+        "orders": list(market.orders),
+        "transactions": list(market.transactions),
+        "final_cash": market.cash,
+        "required_margin": market.get_total_required_margin(),
+        "free_liquidity": market.get_free_liquidity(),
+    }
+
+# =============================================================================================================
+# ======================================= OOS 2023 SHARPE CHECK ===============================================
+# =============================================================================================================
+
+MODELS = ["tcn_mfiv", "gru_mfiv", "tsm_mfiv", "itr_mfiv", "dl_mfiv"]
+
+rows = []
+
+for MODEL in MODELS:
+
+    history_key = f"{MODEL}_{str(PREDICT_YEAR)[2:]}"
+    snapshots = strategy_results[history_key]["snapshots"]
+
+    equity = pd.Series(
+        [s["equity"] for s in snapshots],
+        index=[s["time"] for s in snapshots]
+    )
+
+    returns = equity.pct_change().dropna()
+    sharpe = returns.mean() / returns.std() * np.sqrt(24 * 365)
+
+    rows.append({
+        "year": PREDICT_YEAR,
+        "model": MODEL,
+        "trades": len(strategy_results[history_key]["greek_tests"]),
+        "sharpe": sharpe,
+        "final_equity": equity.iloc[-1]
+    })
+
+oos_2023_sharpe = pd.DataFrame(rows)
+
+print(oos_2023_sharpe)
 # =============================================================================================================
 # ======================================= FITTING 2023 ========================================================
 # =============================================================================================================
