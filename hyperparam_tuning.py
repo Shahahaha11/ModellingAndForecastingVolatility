@@ -21,10 +21,7 @@ import pandas as pd
 import torch
 import optuna
 
-
-sys.path.insert(0, "/Users/shah/CODE_BOOK_4/THESIS_WORKING/THESIS_2")
-sys.path.insert(0, "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/MFIV_calibration")
-os.chdir("/Users/shah/CODE_BOOK_4/THESIS_WORKING/THESIS_2")
+os.chdir("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/MFIV_calibration")
 
 
 # =============================================================================================================
@@ -45,7 +42,7 @@ EPOCHS = 40
 PATIENCE = 6
 SEED = 42
 
-N_TRIALS = 40
+N_TRIALS = 80
 
 
 # =============================================================================================================
@@ -55,23 +52,19 @@ N_TRIALS = 40
 DATA_DIR = Path("../data/rawData")
 
 OUTPUTS_PATH = (
-    "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/"
-    "data/IS/outputs_by_year/outputs_by_year_01.pkl"
+    "../data/IS/outputs_by_year/outputs_by_year_01.pkl"
 )
 
 X_BY_YEAR_PATH = (
-    "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/"
-    "data/IS/x_by_year_fut/x_by_year.pkl"
+    "../data/IS/x_by_year_fut/x_by_year.pkl"
 )
 
 RFR_PATH = (
-    "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/"
-    "data/IS/ready_data/d_btc_by_year_all.pkl"
+    "../data/IS/ready_data/d_btc_by_year_all.pkl"
 )
 
 HYPERPARAM_DIR = (
-    "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/"
-    "data/IS/hyperparameters"
+    "../data/IS/hyperparameters"
 )
 
 
@@ -338,39 +331,39 @@ def suggest_tcn_params(trial):
 
     channel_width = trial.suggest_categorical(
         "channel_width",
-        [8, 16, 32]
+        [4, 8, 16, 32]
     )
 
     num_blocks = trial.suggest_categorical(
         "num_blocks",
-        [5, 6, 7]
+        [4, 5, 6, 7, 8, 9]
     )
 
     kernel_size = trial.suggest_categorical(
         "kernel_size",
-        [3, 5]
+        [2, 3, 5, 7, 9, 11, 13]
     )
 
     dropout = trial.suggest_categorical(
         "dropout",
-        [0.0, 0.10, 0.20]
+        [0.0, 0.10, 0.20, 0.30, 0.40]
     )
 
     learning_rate = trial.suggest_float(
         "learning_rate",
         1e-4,
-        3e-3,
+        1e-2,
         log=True
     )
 
     weight_decay = trial.suggest_categorical(
         "weight_decay",
-        [0.0, 1e-6, 1e-5, 1e-4, 1e-3]
+        [0.0, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1]
     )
 
     batch_size = trial.suggest_categorical(
         "batch_size",
-        [64, 128, 256]
+        [16, 32, 64, 128, 256, 512]
     )
 
     channels = (channel_width,) * num_blocks
@@ -584,12 +577,12 @@ def suggest_gru_params(trial):
 
     hidden_size = trial.suggest_categorical(
         "hidden_size",
-        [16, 32, 64]
+        [8, 16, 32, 64, 128] # EDITED
     )
 
     num_layers = trial.suggest_categorical(
         "num_layers",
-        [1, 2, 3, 4, 6]
+        [1, 2, 3, 4, 6, 8] # EDITED
     )
 
     if num_layers == 1:
@@ -597,13 +590,13 @@ def suggest_gru_params(trial):
     else:
         dropout = trial.suggest_categorical(
             "dropout",
-            [0.0, 0.10, 0.20, 0.30]
+            [0.0, 0.10, 0.20, 0.30, 0.40] # EDITED
         )
 
     learning_rate = trial.suggest_float(
         "learning_rate",
-        1e-4,
-        3e-3,
+        2e-5, # edited
+        5e-3, # edited
         log=True
     )
 
@@ -614,7 +607,7 @@ def suggest_gru_params(trial):
 
     batch_size = trial.suggest_categorical(
         "batch_size",
-        [64, 128, 256]
+        [32, 64, 128, 256]
     )
 
     return {
@@ -799,34 +792,34 @@ def suggest_tsm_params(trial):
 
     num_blocks = trial.suggest_categorical(
         "num_blocks",
-        [1, 2, 3, 4]
+        [1, 2, 3, 4, 5, 6]
     )
 
     feature_hidden = trial.suggest_categorical(
         "feature_hidden",
-        [32, 64, 128]
+        [32, 64, 128, 256, 512]
     )
 
     dropout = trial.suggest_categorical(
         "dropout",
-        [0.0, 0.10, 0.20]
+        [0.0, 0.10, 0.20, 0.30, 0.40]
     )
 
     learning_rate = trial.suggest_float(
         "learning_rate",
-        1e-4,
-        3e-3,
+        2e-5,
+        5e-3,
         log=True
     )
 
     weight_decay = trial.suggest_categorical(
         "weight_decay",
-        [0.0, 1e-6, 1e-5, 1e-4, 1e-3]
+        [0.0, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2]
     )
 
     batch_size = trial.suggest_categorical(
         "batch_size",
-        [64, 128, 256]
+        [32, 64, 128, 256, 512]
     )
 
     return {
@@ -1008,44 +1001,44 @@ def suggest_itr_params(trial):
 
     d_model = trial.suggest_categorical(
         "d_model",
-        [32, 64]
+        [16, 32, 64, 128, 256, 512]
     )
 
     n_heads = trial.suggest_categorical(
         "n_heads",
-        [2, 4]
+        [1, 2, 4, 8, 16]
     )
 
     e_layers = trial.suggest_categorical(
         "e_layers",
-        [1, 2]
+        [2, 3, 4, 6, 8, 10]
     )
 
     d_ff_ratio = trial.suggest_categorical(
         "d_ff_ratio",
-        [2, 4]
+        [2, 4, 8, 12, 16]
     )
 
     dropout = trial.suggest_categorical(
         "dropout",
-        [0.0, 0.10]
+        [0.0, 0.1, 0.2, 0.3, 0.4]
     )
 
     learning_rate = trial.suggest_float(
         "learning_rate",
-        1e-4,
+        1e-5,
         1e-3,
         log=True
     )
 
     weight_decay = trial.suggest_categorical(
         "weight_decay",
-        [0.0, 1e-6, 1e-5, 1e-4, 1e-3]
+        [0.0, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2]
     )
 
     batch_size = trial.suggest_categorical(
         "batch_size",
-        [64, 128, 256]
+        [32, 64, 128, 256, 512]
     )
 
     d_ff = d_model * d_ff_ratio
@@ -1162,7 +1155,7 @@ def tune_itr(itr_data):
             trial,
             itr_data
         ),
-        n_trials=N_TRIALS
+        n_trials=120 # previously 40 from global N_TRIALS.
     )
 
     return study
@@ -1264,7 +1257,7 @@ def suggest_dl_params(trial):
 
     batch_size = trial.suggest_categorical(
         "batch_size",
-        [64, 128, 256]
+        [32, 64, 128, 256]
     )
 
     return {

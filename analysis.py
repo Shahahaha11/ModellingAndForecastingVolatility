@@ -1,48 +1,41 @@
+# ANALYSIS TCN
 # SEARCH WORDS :
-# FINAL_READY_OUTPUTS_BY_YEAR
 # YEARLY_TCN_ESTIMATION
-# YEARLY_MFIV_GARCH_ESTIMATION
 # TESTING_MAIN_WITH_CACHE
+# TCN_TRADER_DIAGNOSTICS
+# TCN_FITTED_TARGET_SPACE_PERFORMANCE
+# TCN_TARGET_PERFORMANCE_EXECUTED_VS_SKIPPED
 # TCN_SCORE_CALIBRATION_DIAGNOSTIC
-## TCN_SCORE_THRESHOLD_CALIBRATION
-### TCN_SCORE_THRESHOLD_TRADER_CALIBRATION
+# TCN_SCORE_THRESHOLD_CALIBRATION
+# TCN_SCORE_THRESHOLD_TRADER_CALIBRATION
+
+
 import pandas as pd
 import numpy as np
-from math import sqrt, pi, exp
-from arch import arch_model
-import yfinance as yf 
-from scipy.optimize import minimize
 import warnings
-from arch.__future__ import reindexing
-from arch.utility.exceptions import ConvergenceWarning
-# from srcA.msGarch import msGARCH
-# from srcA.metrics import metrics
-# from srcA.msGarch import msGARCHIV
-from tqdm import tqdm
+import os, sys
+import pickle
 
-from xgboost import XGBRegressor
+from pathlib import Path
+from arch.utility.exceptions import ConvergenceWarning
+
 warnings.filterwarnings("ignore", category=UserWarning)
-warnings.filterwarnings("ignore", message="y is poorly scaled")
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
 
-
-import os, sys
-sys.path.insert(0, "/Users/shah/CODE_BOOK_4/THESIS_WORKING/THESIS_2")
-sys.path.insert(0, "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/MFIV_calibration")
-os.chdir("/Users/shah/CODE_BOOK_4/THESIS_WORKING/THESIS_2")
+os.chdir("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/MFIV_calibration")
 sys.modules.pop("srcB", None)
 
 ### NOTE :
 # # COMES FROM MODELLING.ipynb
 import pickle 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by_year/outputs_by_year_01.pkl", "rb") as f:
+with open("../data/IS/outputs_by_year/outputs_by_year_01.pkl", "rb") as f:
     outputs_by_year = pickle.load(f)
 
 
 # IMPORTS FROM SRC
 from srcB.market import *
-from srcB.trader_testing_tcn_v1 import testing_execute_trading_strategy
+from srcB.trader_testing_tcn_v2 import testing_execute_trading_strategy
 from srcB.helpers import *
 
 # READ D_BTC AND DF
@@ -65,7 +58,7 @@ for y in YEARS:
 # ======================================= LOAD XQ_BY_YEAR USING X_BY_YEAR ==========================================
 # ==================================================================================================================
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/x_by_year_fut/x_by_year.pkl", "rb") as f:
+with open("../data/IS/x_by_year_fut/x_by_year.pkl", "rb") as f:
     X_by_year = pd.read_pickle(f)
 
 YEARS = [2019, 2020, 2021]
@@ -105,7 +98,7 @@ for y in YEARS:
 # ============================================= BORROW RFR COLUMN  =================================================
 # ==================================================================================================================
 import pickle
-with open ("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/ready_data/d_btc_by_year_all.pkl", "rb") as f :
+with open ("../data/IS/ready_data/d_btc_by_year_all.pkl", "rb") as f :
     d_btc_by_year = pickle.load(f)
 
 YEARS = [2019, 2020, 2021]
@@ -124,7 +117,8 @@ for y in YEARS:
 
 
 # # =============================== LOAD OPTIMAL PARAMETERS IN hyperparam_tuning.py ==================================
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/hyperparameters/tcn_best_params.pkl", "rb") as f:
+expand_index = "_e01"
+with open(f"../data/IS/hyperparameters/tcn_best_params{expand_index}.pkl", "rb") as f:
     best_tcn_params = pickle.load(f)
 
 FORWARD_HOURS = 24
@@ -189,16 +183,16 @@ for y in YEARS:
 # =============================================================================================================
 # ======================================= SAVE TCN BUNDLES ====================================================
 # =============================================================================================================
-os.makedirs("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/TCN", exist_ok = True)
+os.makedirs("../data/IS/TCN", exist_ok = True)
 import pickle
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/TCN/tcn_bundle_by_year.pkl", "wb") as f:
+with open("../data/IS/TCN/tcn_bundle_by_year.pkl", "wb") as f:
     pickle.dump(tcn_bundle_by_year, f)
 
 print("TCN bundles saved:", list(tcn_bundle_by_year.keys()))
 
 # # ==================================================================================================================
 # SAVE THIS OUTPUTS
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by_year/outputs_by_year_04.pkl", "wb") as f:
+with open("../data/IS/outputs_by_year/outputs_by_year_04.pkl", "wb") as f:
     pickle.dump(outputs_by_year, f)
 ## ==================================================================================================================
 
@@ -211,12 +205,12 @@ with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by
 # # =============================================================================================================
 
 # import pickle
-# with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by_year/outputs_by_year_04.pkl", "rb") as f:
+# with open("../data/IS/outputs_by_year/outputs_by_year_04.pkl", "rb") as f:
 #     outputs_by_year = pickle.load(f)
 
 # # IMPORTS FROM SRC
 from srcB.market import *
-from srcB.trader_testing_tcn_v1 import testing_execute_trading_strategy
+from srcB.trader_testing_tcn_v2 import testing_execute_trading_strategy
 from srcB.helpers import *
 
 # ==================================================================================================================
@@ -277,8 +271,8 @@ else:
 # ==================================================================================================================
 # sys.modules.pop("srcB", None)
 
-sys.modules.pop("srcB.trader_testing_tcn_v1", None)
-from srcB.trader_testing_tcn_v1 import testing_execute_trading_strategy
+sys.modules.pop("srcB.trader_testing_tcn_v2", None)
+from srcB.trader_testing_tcn_v2 import testing_execute_trading_strategy
 YEARS = [2019, 2020, 2021]
 MODELS = [
     "tcn_mfiv"
@@ -311,13 +305,6 @@ for YEAR in YEARS:
                 trader_cache=trader_cache,
                 run_by=RUN_BY,
                 quantity=10,
-                expiry_days=30,
-                hold_days=7,
-                lookback_hours=168,
-                mean_hours=12,
-                ql=0.10,
-                qh=0.90,
-                z=1.645,
                 forward_hours=FORWARD_HOURS
             )
 
@@ -349,13 +336,13 @@ print("cache:", "tcn_action" in trader_cache[2019].columns)
 # ============================================= SAVE DICT  ========================================================
 # ==================================================================================================================
 import sys, os
-os.makedirs("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/data_strategy_results", exist_ok = True)
+os.makedirs("../data/data_strategy_results", exist_ok = True)
 import pickle 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/data_strategy_results/strategy_results.pkl", "wb") as f:
+with open("../data/data_strategy_results/strategy_results.pkl", "wb") as f:
     pickle.dump(strategy_results, f)
 
 # # LOAD BACK 
-# with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/data_strategy_results/strategy_results.pkl", "rb") as f:
+# with open("../data/data_strategy_results/strategy_results.pkl", "rb") as f:
 #     strategy_results = pickle.load(f)
 
 ## ==================================================================================================================
@@ -594,8 +581,8 @@ print(threshold_check.to_string(index=False))
 # ================================ TCN_SCORE_THRESHOLD_TRADER_CALIBRATION =====================================
 # =============================================================================================================
 
-sys.modules.pop("srcB.trader_testing_tcn_v1", None)
-from srcB.trader_testing_tcn_v1 import testing_execute_trading_strategy
+sys.modules.pop("srcB.trader_testing_tcn_v2", None)
+from srcB.trader_testing_tcn_v2 import testing_execute_trading_strategy
 
 THRESHOLDS = [
     0.0,
@@ -636,12 +623,13 @@ for threshold in THRESHOLDS:
 
         returns = equity.pct_change().dropna()
         sharpe = returns.mean() / returns.std() * np.sqrt(24 * 365)
-
+        final_equity = equity.iloc[-1]
         rows.append({
             "threshold": threshold,
             "year": y,
-            "trades": len(greek_tests),
-            "sharpe": sharpe
+            "trades": sum(t["action"] in ("buy_to_open", "sell_to_open") for t in market.transactions) // 2,
+            "sharpe": sharpe,
+            "final_equity" : final_equity
         })
 
 threshold_trader_check = pd.DataFrame(rows)
@@ -653,20 +641,50 @@ print(threshold_trader_check.to_string(index=False))
 # ======================================= NOTE =====================================================================
 # ==================================================================================================================
 
-# TCN_SCORE_THRESHOLD = 0.000693
+# TCN_SCORE_THRESHOLD = 0.000
 # No positive threshold improves Sharpe consistently across all three IS years.
 # 0.001823 only improves 2019; the others mostly deteriorate performance.
+
+# =============================================================================================================
+# ======================================= SAVE DIAGNOSTIC DATA ================================================
+# =============================================================================================================
+# TO BE RUN 
+DIAGNOSTICS_DIR = "../data/IS/diagnostics"
+os.makedirs(DIAGNOSTICS_DIR, exist_ok=True)
+
+with open(f"{DIAGNOSTICS_DIR}/tcn_targets_by_year.pkl", "wb") as f:
+    pickle.dump(tcn_targets_by_year, f)
+
+with open(f"{DIAGNOSTICS_DIR}/tcn_output_by_year.pkl", "wb") as f:
+    pickle.dump(tcn_output_by_year, f)
 
 
 # ==================================================================================================================
 # ======================================= OTHER NOTE ===============================================================
 # ==================================================================================================================
 
+import pickle
+# expand_index = "_e02"
+expand_index = "_e01"
+# expand_index = ""
+with open(f"../data/IS/hyperparameters/tcn_study{expand_index}.pkl", "rb") as f:
+    study = pickle.load(f)
+
+import optuna
+fig = optuna.visualization.plot_slice(study)
+fig.show()
+
+fig_1 = optuna.visualization.plot_optimization_history(study)
+fig_1.show()
 
 
 
 
 
+
+print("\nSEARCH SPACE")
+for name, distribution in study.best_trial.distributions.items():
+    print(name, distribution)
 
 
 

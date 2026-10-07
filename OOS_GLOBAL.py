@@ -23,9 +23,7 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
 
 import os, sys
-sys.path.insert(0, "/Users/shah/CODE_BOOK_4/THESIS_WORKING/THESIS_2")
-sys.path.insert(0, "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/MFIV_calibration")
-os.chdir("/Users/shah/CODE_BOOK_4/THESIS_WORKING/THESIS_2")
+os.chdir("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/MFIV_calibration")
 sys.modules.pop("srcB", None)
 
 import pyttsx3
@@ -41,7 +39,7 @@ def speak_done():
 # =============================================================================================================
 
 import pickle 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/OOS/outputs_by_year/outputs_by_year_01.pkl", "rb") as f:
+with open("../data/OOS/outputs_by_year/outputs_by_year_01.pkl", "rb") as f:
     outputs_by_year_OOS = pickle.load(f)
 
 # =============================================================================================================
@@ -84,7 +82,7 @@ YEARS = [2022, 2023, 2024, 2025]
 QUARTERS = ["q1", "q2", "q3", "q4"]
 
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/OOS/x_by_year_fut/x_by_year.pkl", "rb") as f:
+with open("../data/OOS/x_by_year_fut/x_by_year.pkl", "rb") as f:
     X_by_year_OOS = pickle.load(f)
 
 for y in YEARS:
@@ -128,7 +126,7 @@ for y in YEARS:
 # ======================================= BORROW RFR COLUMN ===================================================
 # =============================================================================================================
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/OOS/ready_data/d_btc_by_year_all.pkl", "rb") as f:
+with open("../data/OOS/ready_data/d_btc_by_year_all.pkl", "rb") as f:
     d_btc_by_year_OOS = pickle.load(f)
 
 
@@ -146,11 +144,17 @@ for y in YEARS:
 # ======================================= FROZEN MODEL SPECIFICATIONS =========================================
 # =============================================================================================================
 
-TCN_SCORE_THRESHOLD = 0.000693
-GRU_SCORE_THRESHOLD = 0.000631
-TSM_SCORE_THRESHOLD = 0.000775
-ITR_SCORE_THRESHOLD = 0.000
-DL_SCORE_THRESHOLD  = 0.000694
+# TCN_SCORE_THRESHOLD = 0.000693
+# GRU_SCORE_THRESHOLD = 0.000631
+# TSM_SCORE_THRESHOLD = 0.000775
+# ITR_SCORE_THRESHOLD = 0.000
+# DL_SCORE_THRESHOLD  = 0.000694
+
+TCN_SCORE_THRESHOLD = 0.0
+GRU_SCORE_THRESHOLD = 0.0
+TSM_SCORE_THRESHOLD = 0.0
+ITR_SCORE_THRESHOLD = 0.0
+DL_SCORE_THRESHOLD  = 0.0
 
 FORWARD_HOURS = 24
 
@@ -158,7 +162,7 @@ FORWARD_HOURS = 24
 # ======================================= COMMON PARAMETERS / LOADING =========================================
 # =============================================================================================================
 
-EPOCHS = 40
+EPOCHS = 40 # Now unused
 
 TCN_SEED = 42
 GRU_SEED = 11
@@ -167,21 +171,26 @@ ITR_SEED = 42
 DL_SEED = 42
 
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/hyperparameters/tcn_best_params.pkl", "rb") as f:
+with open("../data/IS/hyperparameters/tcn_best_params.pkl", "rb") as f:
     best_tcn_params = pickle.load(f)
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/hyperparameters/gru_best_params.pkl", "rb") as f:
+with open("../data/IS/hyperparameters/gru_best_params.pkl", "rb") as f:
     best_gru_params = pickle.load(f)
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/hyperparameters/tsm_best_params.pkl", "rb") as f:
+with open("../data/IS/hyperparameters/tsm_best_params.pkl", "rb") as f:
     best_tsm_params = pickle.load(f)
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/hyperparameters/itr_best_params.pkl", "rb") as f:
+with open("../data/IS/hyperparameters/itr_best_params.pkl", "rb") as f:
     best_itr_params = pickle.load(f)
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/hyperparameters/dl_best_params.pkl", "rb") as f:
+with open("../data/IS/hyperparameters/dl_best_params.pkl", "rb") as f:
     best_dl_params = pickle.load(f)
 
+TCN_EPOCHS = int(np.median(list(best_tcn_params["epochs_by_year"].values())))
+GRU_EPOCHS = int(np.median(list(best_gru_params["epochs_by_year"].values())))
+TSM_EPOCHS = int(np.median(list(best_tsm_params["epochs_by_year"].values())))
+ITR_EPOCHS = int(np.median(list(best_itr_params["epochs_by_year"].values())))
+DL_EPOCHS  = int(np.median(list(best_dl_params["epochs_by_year"].values())))
 
 sys.modules.pop("srcB.tcn_model_mfiv", None)
 sys.modules.pop("srcB.gru_model_mfiv", None)
@@ -198,8 +207,8 @@ from srcB.dl_model_mfiv import dl_mfiv, predict_dl
 
 from srcB.market import Market
 
-sys.modules.pop("srcB.trader_testing_tcn_v1", None)
-from srcB.trader_testing_tcn_v1 import testing_execute_trading_strategy
+sys.modules.pop("srcB.trader_testing_tcn_v2", None)
+from srcB.trader_testing_tcn_v2 import testing_execute_trading_strategy
 
 
 MODEL_CONFIGS = {
@@ -262,7 +271,7 @@ _, tcn_bundle_2022, _ = tcn_mfiv(
     channels=best_tcn_params["channels"],
     kernel_size=best_tcn_params["kernel_size"],
     dropout=best_tcn_params["dropout"],
-    epochs=EPOCHS,
+    epochs=TCN_EPOCHS,
     batch_size=best_tcn_params["batch_size"],
     learning_rate=best_tcn_params["learning_rate"],
     weight_decay=best_tcn_params["weight_decay"],
@@ -279,7 +288,7 @@ _, gru_bundle_2022, _ = gru_mfiv(
     hidden_size=best_gru_params["hidden_size"],
     num_layers=best_gru_params["num_layers"],
     dropout=best_gru_params["dropout"],
-    epochs=EPOCHS,
+    epochs=GRU_EPOCHS,
     batch_size=best_gru_params["batch_size"],
     learning_rate=best_gru_params["learning_rate"],
     weight_decay=best_gru_params["weight_decay"],
@@ -296,7 +305,7 @@ _, tsm_bundle_2022, _ = tsm_mfiv(
     num_blocks=best_tsm_params["num_blocks"],
     feature_hidden=best_tsm_params["feature_hidden"],
     dropout=best_tsm_params["dropout"],
-    epochs=EPOCHS,
+    epochs=TSM_EPOCHS,
     batch_size=best_tsm_params["batch_size"],
     learning_rate=best_tsm_params["learning_rate"],
     weight_decay=best_tsm_params["weight_decay"],
@@ -315,7 +324,7 @@ _, itr_bundle_2022, _ = itr_mfiv(
     e_layers=best_itr_params["e_layers"],
     d_ff=best_itr_params["d_ff"],
     dropout=best_itr_params["dropout"],
-    epochs=EPOCHS,
+    epochs=ITR_EPOCHS,
     batch_size=best_itr_params["batch_size"],
     learning_rate=best_itr_params["learning_rate"],
     weight_decay=best_itr_params["weight_decay"],
@@ -331,7 +340,7 @@ _, dl_bundle_2022, _ = dl_mfiv(
     delta_target=0.20,
     moving_avg=best_dl_params["moving_avg"],
     individual=best_dl_params["individual"],
-    epochs=EPOCHS,
+    epochs=DL_EPOCHS,
     batch_size=best_dl_params["batch_size"],
     learning_rate=best_dl_params["learning_rate"],
     weight_decay=best_dl_params["weight_decay"],
@@ -381,6 +390,13 @@ prediction_outputs_2023 = [
     itr_output_2023,
     dl_output_2023
 ]
+# one output contains 
+# 1. tcn_long_straddle
+# 2. tcn_short_straddle
+# 3. tcn_long_strangle
+# 4. tcn_short_strangle
+# 5. tcn_best_score
+# 6. tcn_action
 
 for q in QUARTERS:
 
@@ -493,7 +509,10 @@ for MODEL in MODELS:
     rows.append({
         "year": PREDICT_YEAR,
         "model": MODEL,
-        "trades": len(strategy_results[history_key]["greek_tests"]),
+        "trades": sum(
+            t["action"] in ("buy_to_open", "sell_to_open")
+            for t in strategy_results[history_key]["transactions"]
+            ) //2,
         "sharpe": sharpe,
         "final_equity": equity.iloc[-1]
     })
@@ -501,6 +520,7 @@ for MODEL in MODELS:
 oos_2023_sharpe = pd.DataFrame(rows)
 
 print(oos_2023_sharpe)
+
 # =============================================================================================================
 # ======================================= FITTING 2023 ========================================================
 # =============================================================================================================
@@ -530,7 +550,7 @@ _, tcn_bundle_2023, _ = tcn_mfiv(
     channels=best_tcn_params["channels"],
     kernel_size=best_tcn_params["kernel_size"],
     dropout=best_tcn_params["dropout"],
-    epochs=EPOCHS,
+    epochs=TCN_EPOCHS,
     batch_size=best_tcn_params["batch_size"],
     learning_rate=best_tcn_params["learning_rate"],
     weight_decay=best_tcn_params["weight_decay"],
@@ -547,7 +567,7 @@ _, gru_bundle_2023, _ = gru_mfiv(
     hidden_size=best_gru_params["hidden_size"],
     num_layers=best_gru_params["num_layers"],
     dropout=best_gru_params["dropout"],
-    epochs=EPOCHS,
+    epochs=GRU_EPOCHS,
     batch_size=best_gru_params["batch_size"],
     learning_rate=best_gru_params["learning_rate"],
     weight_decay=best_gru_params["weight_decay"],
@@ -564,7 +584,7 @@ _, tsm_bundle_2023, _ = tsm_mfiv(
     num_blocks=best_tsm_params["num_blocks"],
     feature_hidden=best_tsm_params["feature_hidden"],
     dropout=best_tsm_params["dropout"],
-    epochs=EPOCHS,
+    epochs=TSM_EPOCHS,
     batch_size=best_tsm_params["batch_size"],
     learning_rate=best_tsm_params["learning_rate"],
     weight_decay=best_tsm_params["weight_decay"],
@@ -583,7 +603,7 @@ _, itr_bundle_2023, _ = itr_mfiv(
     e_layers=best_itr_params["e_layers"],
     d_ff=best_itr_params["d_ff"],
     dropout=best_itr_params["dropout"],
-    epochs=EPOCHS,
+    epochs=ITR_EPOCHS,
     batch_size=best_itr_params["batch_size"],
     learning_rate=best_itr_params["learning_rate"],
     weight_decay=best_itr_params["weight_decay"],
@@ -599,7 +619,7 @@ _, dl_bundle_2023, _ = dl_mfiv(
     delta_target=0.20,
     moving_avg=best_dl_params["moving_avg"],
     individual=best_dl_params["individual"],
-    epochs=EPOCHS,
+    epochs=DL_EPOCHS,
     batch_size=best_dl_params["batch_size"],
     learning_rate=best_dl_params["learning_rate"],
     weight_decay=best_dl_params["weight_decay"],
@@ -678,6 +698,105 @@ for q in QUARTERS:
 
 
 # =============================================================================================================
+# ======================================= OOS 2024 TRADER ======================================================
+# =============================================================================================================
+
+PREDICT_YEAR = 2024
+
+for MODEL, config in MODEL_CONFIGS.items():
+
+    for q in QUARTERS:
+        outputs_by_year_OOS[PREDICT_YEAR][q]["tcn_action"] = outputs_by_year_OOS[PREDICT_YEAR][q][
+            config["action_col"]
+        ]
+
+        outputs_by_year_OOS[PREDICT_YEAR][q]["tcn_best_score"] = outputs_by_year_OOS[PREDICT_YEAR][q][
+            config["score_col"]
+        ]
+
+
+    trader_cache = {
+        PREDICT_YEAR: pd.concat(
+            [outputs_by_year_OOS[PREDICT_YEAR][q] for q in QUARTERS]
+        ).sort_index()
+    }
+
+
+    market = Market(
+        option_df=df_raw_by_year[PREDICT_YEAR],
+        time_df=d_btc_raw_by_year[PREDICT_YEAR],
+        starting_cash=100_000,
+        im_multiplier=0.15,
+        mm_buffer_rate=0.05,
+    )
+
+
+    snapshots, greek_tests = testing_execute_trading_strategy(
+        bt_year=PREDICT_YEAR,
+        bt_quarter=None,
+        model="tcn_mfiv",
+        outputs_by_year=outputs_by_year_OOS,
+        market=market,
+        trader_cache=trader_cache,
+        run_by="year",
+        tcn_score_threshold=config["threshold"],
+        forward_hours=FORWARD_HOURS
+    )
+
+    history_key = f"{MODEL}_{str(PREDICT_YEAR)[2:]}"
+
+    equity_curve = market.get_equity_history()
+
+    strategy_results[history_key] = {
+        "equity_curve": equity_curve,
+        "snapshots": snapshots,
+        "greek_tests": greek_tests,
+        "orders": list(market.orders),
+        "transactions": list(market.transactions),
+        "final_cash": market.cash,
+        "required_margin": market.get_total_required_margin(),
+        "free_liquidity": market.get_free_liquidity(),
+    }
+
+# =============================================================================================================
+# ======================================= OOS 2024 SHARPE CHECK ===============================================
+# =============================================================================================================
+
+MODELS = ["tcn_mfiv", "gru_mfiv", "tsm_mfiv", "itr_mfiv", "dl_mfiv"]
+
+rows = []
+
+for MODEL in MODELS:
+
+    history_key = f"{MODEL}_{str(PREDICT_YEAR)[2:]}"
+    snapshots = strategy_results[history_key]["snapshots"]
+
+    equity = pd.Series(
+        [s["equity"] for s in snapshots],
+        index=[s["time"] for s in snapshots]
+    )
+
+    returns = equity.pct_change().dropna()
+    sharpe = returns.mean() / returns.std() * np.sqrt(24 * 365)
+
+    rows.append({
+        "year": PREDICT_YEAR,
+        "model": MODEL,
+        "trades": sum(
+            t["action"] in ("buy_to_open", "sell_to_open")
+            for t in strategy_results[history_key]["transactions"]
+            ) //2,
+        "sharpe": sharpe,
+        "final_equity": equity.iloc[-1]
+    })
+    print(MODEL, returns.groupby(returns.index.date).size().value_counts())
+
+oos_2024_sharpe = pd.DataFrame(rows)
+
+print(oos_2024_sharpe)
+
+
+# =============================================================================================================
 # ======================================= FITTING 2024 ========================================================
 # =============================================================================================================
 
@@ -706,7 +825,7 @@ _, tcn_bundle_2024, _ = tcn_mfiv(
     channels=best_tcn_params["channels"],
     kernel_size=best_tcn_params["kernel_size"],
     dropout=best_tcn_params["dropout"],
-    epochs=EPOCHS,
+    epochs=TCN_EPOCHS,
     batch_size=best_tcn_params["batch_size"],
     learning_rate=best_tcn_params["learning_rate"],
     weight_decay=best_tcn_params["weight_decay"],
@@ -723,7 +842,7 @@ _, gru_bundle_2024, _ = gru_mfiv(
     hidden_size=best_gru_params["hidden_size"],
     num_layers=best_gru_params["num_layers"],
     dropout=best_gru_params["dropout"],
-    epochs=EPOCHS,
+    epochs=GRU_EPOCHS,
     batch_size=best_gru_params["batch_size"],
     learning_rate=best_gru_params["learning_rate"],
     weight_decay=best_gru_params["weight_decay"],
@@ -740,7 +859,7 @@ _, tsm_bundle_2024, _ = tsm_mfiv(
     num_blocks=best_tsm_params["num_blocks"],
     feature_hidden=best_tsm_params["feature_hidden"],
     dropout=best_tsm_params["dropout"],
-    epochs=EPOCHS,
+    epochs=TSM_EPOCHS,
     batch_size=best_tsm_params["batch_size"],
     learning_rate=best_tsm_params["learning_rate"],
     weight_decay=best_tsm_params["weight_decay"],
@@ -759,7 +878,7 @@ _, itr_bundle_2024, _ = itr_mfiv(
     e_layers=best_itr_params["e_layers"],
     d_ff=best_itr_params["d_ff"],
     dropout=best_itr_params["dropout"],
-    epochs=EPOCHS,
+    epochs=ITR_EPOCHS,
     batch_size=best_itr_params["batch_size"],
     learning_rate=best_itr_params["learning_rate"],
     weight_decay=best_itr_params["weight_decay"],
@@ -775,7 +894,7 @@ _, dl_bundle_2024, _ = dl_mfiv(
     delta_target=0.20,
     moving_avg=best_dl_params["moving_avg"],
     individual=best_dl_params["individual"],
-    epochs=EPOCHS,
+    epochs=DL_EPOCHS,
     batch_size=best_dl_params["batch_size"],
     learning_rate=best_dl_params["learning_rate"],
     weight_decay=best_dl_params["weight_decay"],
@@ -854,86 +973,112 @@ for q in QUARTERS:
 
 
 # =============================================================================================================
-# ======================================= GLOBAL OOS TRADER ===================================================
+# ======================================= OOS 2025 TRADER ======================================================
 # =============================================================================================================
 
-for PREDICT_YEAR in PREDICT_YEARS:
+PREDICT_YEAR = 2025
 
-    for MODEL, config in MODEL_CONFIGS.items():
+for MODEL, config in MODEL_CONFIGS.items():
 
-        outputs_trader = {
-            PREDICT_YEAR: {
-                q: outputs_by_year_OOS[PREDICT_YEAR][q].copy()
-                for q in QUARTERS
-            }
-        }
+    for q in QUARTERS:
+        outputs_by_year_OOS[PREDICT_YEAR][q]["tcn_action"] = outputs_by_year_OOS[PREDICT_YEAR][q][
+            config["action_col"]
+        ]
 
-        for q in QUARTERS:
-
-            outputs_trader[PREDICT_YEAR][q]["tcn_action"] = outputs_trader[PREDICT_YEAR][q][
-                config["action_col"]
-            ]
-
-            outputs_trader[PREDICT_YEAR][q]["tcn_best_score"] = outputs_trader[PREDICT_YEAR][q][
-                config["score_col"]
-            ]
+        outputs_by_year_OOS[PREDICT_YEAR][q]["tcn_best_score"] = outputs_by_year_OOS[PREDICT_YEAR][q][
+            config["score_col"]
+        ]
 
 
-        trader_cache = {
-            PREDICT_YEAR: pd.concat([
-                outputs_trader[PREDICT_YEAR][q]
-                for q in QUARTERS
-            ]).sort_index()
-        }
+    trader_cache = {
+        PREDICT_YEAR: pd.concat(
+            [outputs_by_year_OOS[PREDICT_YEAR][q] for q in QUARTERS]
+        ).sort_index()
+    }
 
 
-        market = Market(
-            option_df=df_raw_by_year[PREDICT_YEAR],
-            time_df=d_btc_raw_by_year[PREDICT_YEAR],
-            starting_cash=100_000,
-            im_multiplier=0.15,
-            mm_buffer_rate=0.05,
-        )
+    market = Market(
+        option_df=df_raw_by_year[PREDICT_YEAR],
+        time_df=d_btc_raw_by_year[PREDICT_YEAR],
+        starting_cash=100_000,
+        im_multiplier=0.15,
+        mm_buffer_rate=0.05,
+    )
 
 
-        snapshots, greek_tests = testing_execute_trading_strategy(
-            bt_year=PREDICT_YEAR,
-            bt_quarter=None,
-            model="tcn_mfiv",
-            outputs_by_year=outputs_trader,
-            market=market,
-            trader_cache=trader_cache,
-            run_by="year",
-            tcn_score_threshold=config["threshold"],
-            forward_hours=FORWARD_HOURS
-        )
+    snapshots, greek_tests = testing_execute_trading_strategy(
+        bt_year=PREDICT_YEAR,
+        bt_quarter=None,
+        model="tcn_mfiv",
+        outputs_by_year=outputs_by_year_OOS,
+        market=market,
+        trader_cache=trader_cache,
+        run_by="year",
+        tcn_score_threshold=config["threshold"],
+        forward_hours=FORWARD_HOURS
+    )
 
-        history_key = f"{MODEL}_{str(PREDICT_YEAR)[2:]}"
+    history_key = f"{MODEL}_{str(PREDICT_YEAR)[2:]}"
 
-        strategy_results[history_key] = {
-            "equity_curve": market.get_equity_history(),
-            "snapshots": snapshots,
-            "greek_tests": greek_tests,
-            "orders": list(market.orders),
-            "transactions": list(market.transactions),
-            "final_cash": market.cash,
-            "required_margin": market.get_total_required_margin(),
-            "free_liquidity": market.get_free_liquidity(),
-        }
+    equity_curve = market.get_equity_history()
 
+    strategy_results[history_key] = {
+        "equity_curve": equity_curve,
+        "snapshots": snapshots,
+        "greek_tests": greek_tests,
+        "orders": list(market.orders),
+        "transactions": list(market.transactions),
+        "final_cash": market.cash,
+        "required_margin": market.get_total_required_margin(),
+        "free_liquidity": market.get_free_liquidity(),
+    }
 
-print(strategy_results.keys())
+# =============================================================================================================
+# ======================================= OOS 2025 SHARPE CHECK ===============================================
+# =============================================================================================================
+
+MODELS = ["tcn_mfiv", "gru_mfiv", "tsm_mfiv", "itr_mfiv", "dl_mfiv"]
+
+rows = []
+
+for MODEL in MODELS:
+
+    history_key = f"{MODEL}_{str(PREDICT_YEAR)[2:]}"
+    snapshots = strategy_results[history_key]["snapshots"]
+
+    equity = pd.Series(
+        [s["equity"] for s in snapshots],
+        index=[s["time"] for s in snapshots]
+    )
+
+    returns = equity.pct_change().dropna()
+    sharpe = returns.mean() / returns.std() * np.sqrt(24 * 365)
+
+    rows.append({
+        "year": PREDICT_YEAR,
+        "model": MODEL,
+        "trades": sum(
+            t["action"] in ("buy_to_open", "sell_to_open")
+            for t in strategy_results[history_key]["transactions"]
+            ) // 2,
+        "sharpe": sharpe,
+        "final_equity": equity.iloc[-1]
+    })
+
+oos_2025_sharpe = pd.DataFrame(rows)
+
+print(oos_2025_sharpe)
 
 
 # =============================================================================================================
 # ======================================= SAVE OOS OUTPUTS =====================================================
 # =============================================================================================================
-os.makedirs("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/OOS/OOS_GLOBAL", exist_ok = True)
+os.makedirs("../data/OOS/OOS_GLOBAL", exist_ok = True)
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/OOS/OOS_GLOBAL/outputs_by_year.pkl", "wb") as f:
+with open("../data/OOS/OOS_GLOBAL/outputs_by_year.pkl", "wb") as f:
     pickle.dump(outputs_by_year_OOS, f)
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/OOS/OOS_GLOBAL/strategy_results.pkl", "wb") as f:
+with open("../data/OOS/OOS_GLOBAL/strategy_results.pkl", "wb") as f:
     pickle.dump(strategy_results, f)
 
 

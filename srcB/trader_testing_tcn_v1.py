@@ -1,6 +1,6 @@
-### NEW 8
-# Result: TCN attempts to reach 10 matched quantity immediately, then at each of the next 3 hourly observations if the same TCN action remains active, without resetting the original 24-hour holding clock.
-
+### NEW 9 SEP 28 edits
+# 8: TCN attempts to reach 10 matched quantity immediately, then at each of the next 3 hourly observations if the same TCN action remains active, without resetting the original 24-hour holding clock.
+# 9 : YEAR-END LIQUIDATION WINDOW block 2 replaced to use new get_maintenance_margin from market.py and more.
 
 import pandas as pd
 import numpy as np
@@ -130,7 +130,7 @@ def testing_execute_trading_strategy(
         entry_lower_boundary = None
         entry_upper_boundary = None
 
-    def liquidate_all():
+    def liquidate_all(liquidation=False):
         for instrument in list(market.holdings.instruments):
             key = (
                 instrument.Strike,
@@ -138,9 +138,11 @@ def testing_execute_trading_strategy(
                 instrument.Right,
                 instrument.Direction
             )
-
-            market.liquidate(key, instrument)
-
+            market.liquidate(
+                key,
+                instrument,
+                liquidation=liquidation
+            )
         return len(market.holdings.instruments) == 0
     def tcn_entry_contracts(now, action, forward_hours=24, delta_target=0.20):
         direction = "buy" if action.startswith("long_") else "sell"
@@ -343,14 +345,13 @@ def testing_execute_trading_strategy(
             save_snapshot(now)
             continue
 
-        if market.get_free_liquidity() < 0:
-            if liquidate_all():
+        if market.cash < market.get_maintenance_margin():
+            if liquidate_all(liquidation=True):
                 reset_position_state()
 
             market.record_equity()
             save_snapshot(now)
             continue
-
         s_now = signal.iloc[idx]
         q_lo = q_lo_series.iloc[idx]
         q_hi = q_hi_series.iloc[idx]
@@ -596,15 +597,13 @@ def testing_execute_trading_strategy(
                 )
 
             else:
-                new_margin = (
-                    market.spot
-                    * (market.im_multiplier + market.mm_buffer_rate)
-                    * pair_qty
-                    * 2
-                )
+                call_margin, _ = market.option_margin(selected_call, pair_qty)
+                put_margin, _ = market.option_margin(selected_put, pair_qty)
+                new_margin = call_margin + put_margin
 
                 trade_exists = (
                     call_exists
+                    and put_exists
                     and market.get_free_liquidity()
                     + call_cash_change
                     + put_cash_change
@@ -1093,19 +1092,17 @@ def testing_execute_trading_strategy(
             selected_call, qty=pair_qty
         )
 
-        _, _, put_cash_change = market.mock_trade(
+        put_exists, _, put_cash_change = market.mock_trade(
             selected_put, qty=pair_qty
         )
 
-        new_margin = (
-            market.spot
-            * (market.im_multiplier + market.mm_buffer_rate)
-            * pair_qty
-            * 2
-        )
+        call_margin, _ = market.option_margin(selected_call, pair_qty)
+        put_margin, _ = market.option_margin(selected_put, pair_qty)
+        new_margin = call_margin + put_margin
 
         trade_exists = (
             call_exists
+            and put_exists
             and market.get_free_liquidity()
             + call_cash_change
             + put_cash_change

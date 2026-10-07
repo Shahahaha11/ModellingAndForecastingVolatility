@@ -1,4 +1,4 @@
-# RFR FIXED 11 AUG
+# LAST FIX : VARIANCE SCALING IN OPTION_VALUE : 28 SEP
  
 import pandas as pd
 import numpy as np
@@ -97,24 +97,50 @@ class Market:
         self.now = None
         self.holdings = Holdings(starting_cash, self.now)   
         self.current = pd.DataFrame()
+    def option_margin(self, instrument, qty):
+        mark = instrument.OptionPriceBTC
+
+        if instrument.Right == "C":
+            otm = max((instrument.Strike - self.spot) / self.spot, 0.0)
+            maintenance = 0.075 + mark
+            initial = max(self.im_multiplier - otm, 0.10) + mark
+
+        else:
+            otm = max((self.spot - instrument.Strike) / self.spot, 0.0)
+            maintenance = max(0.075, 0.075 * mark) + mark
+            initial = max(
+                max(self.im_multiplier - otm, 0.10) + mark,
+                maintenance
+            )
+
+        return (
+            self.spot * initial * qty,
+            self.spot * maintenance * qty
+        )
 
     def calculate_margin_requirements(self):
-        # Counts only active short positions to lock margin capital
-        short_qty = sum(
-            i.Amount
-            for i in self.holdings.instruments
-            if i.Direction == "sell"
-        )
-        
-        # FIXED: Removed contract_size completely; uses your 100x multiplier scale natively
-        self.locked_initial_margin = self.spot * self.im_multiplier * short_qty
-        self.locked_buffer_margin = self.spot * self.mm_buffer_rate  * short_qty
-        
+        self.locked_initial_margin = 0.0
+        self.locked_buffer_margin = 0.0
+
+        for instrument in self.holdings.instruments:
+            if instrument.Direction != "sell":
+                continue
+
+            initial_margin, maintenance_margin = self.option_margin(
+                instrument,
+                instrument.Amount
+            )
+
+            self.locked_initial_margin += initial_margin
+            self.locked_buffer_margin += maintenance_margin        
 
     def get_total_required_margin(self):
-        """Returns the total absolute cash balance that must remain in reserves."""
-        return self.locked_initial_margin + self.locked_buffer_margin
-
+        """Returns the total initial margin required."""
+        return self.locked_initial_margin
+    
+    def get_maintenance_margin(self):
+        return self.locked_buffer_margin
+    
     def get_free_liquidity(self):
         """Spendable/usable cash balance remaining after subtracting locked margin reserves."""
         return self.cash - self.get_total_required_margin()
@@ -124,6 +150,13 @@ class Market:
         self.holdings.time = self.now
         self.current = self.option[self.option["date_time"] == self.now].copy()
         self.spot = self.time_df.loc[self.now, "close"]
+        for instrument in self.holdings.instruments:
+            current = self.current[
+                self.current["instrument_name"] == instrument.Symbol
+            ]
+
+            if not current.empty:
+                instrument.OptionPriceBTC = float(current.iloc[-1]["price"])
         
         # FIXED: Reordered processing sequentially so spot exists before margin math triggers
         self.remove_expired()
@@ -207,16 +240,13 @@ class Market:
 
         elif instrument.Direction == "sell":
             cash_change = instrument.Price * qty - fee
-            new_initial_margin = self.spot * self.im_multiplier * qty
-            new_buffer_margin = self.spot * self.mm_buffer_rate * qty
+            new_initial_margin, _ = self.option_margin(instrument, qty)
 
             if (
                 self.cash
                 + cash_change
                 - self.locked_initial_margin
-                - self.locked_buffer_margin
                 - new_initial_margin
-                - new_buffer_margin
                 < 0
             ):
                 return exists, total_amount, cash_change
@@ -297,19 +327,16 @@ class Market:
             return None
         fee = min(0.0003, 0.125 * instrument.OptionPriceBTC) * self.spot * qty
         cash_change = instrument.Price * qty - fee
-        new_initial_margin = self.spot * self.im_multiplier * qty
-        new_buffer_margin = self.spot * self.mm_buffer_rate * qty
+        new_initial_margin, _ = self.option_margin(instrument, qty)
+
         if (
             self.cash
             + cash_change
             - self.locked_initial_margin
-            - self.locked_buffer_margin
             - new_initial_margin
-            - new_buffer_margin
             < 0
         ):
             return None
-
         order = {
             "time": self.now,
             "symbol": instrument.Symbol,
@@ -359,7 +386,7 @@ class Market:
         self.calculate_margin_requirements()
         return order
 
-    def liquidate(self, key, instrument, qty=None):
+    def liquidate(self, key, instrument, qty=None, liquidation=False):
 
         if qty is None:
             qty = instrument.Amount
@@ -395,11 +422,11 @@ class Market:
 
             fill_qty = min(qty_left, current_inst.Amount)
 
-            fee = min(
-                0.0003,
-                0.125 * current_inst.OptionPriceBTC
-            ) * self.spot * fill_qty
-
+            if liquidation:
+                fee = min(0.0019, 0.25 * current_inst.OptionPriceBTC) * self.spot * fill_qty
+            else:
+                fee = min(0.0003, 0.125 * current_inst.OptionPriceBTC) * self.spot * fill_qty
+                
             if instrument.Direction == "buy":
                 cash_change = current_inst.Price * fill_qty - fee
             else:
@@ -479,7 +506,7 @@ class Market:
         ret = np.log(close / close.shift(1)).dropna()
         if len(ret) == 0:
             return np.nan
-        return ret.var() * (365 * 24)
+        return ret.var() * (365 * 24 * 60)
  
     def std(self, n=60):
         close = self.close_price(n)

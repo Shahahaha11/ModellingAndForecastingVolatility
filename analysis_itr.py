@@ -8,7 +8,6 @@
 # ITR_SCORE_CALIBRATION_DIAGNOSTIC
 # ITR_SCORE_THRESHOLD_CALIBRATION
 # ITR_SCORE_THRESHOLD_TRADER_CALIBRATION
-
 import pandas as pd
 import numpy as np
 import warnings
@@ -22,11 +21,9 @@ warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
 
-
-sys.path.insert(0, "/Users/shah/CODE_BOOK_4/THESIS_WORKING/THESIS_2")
-sys.path.insert(0, "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/MFIV_calibration")
-os.chdir("/Users/shah/CODE_BOOK_4/THESIS_WORKING/THESIS_2")
+os.chdir("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/MFIV_calibration")
 sys.modules.pop("srcB", None)
+
 
 
 # =============================================================================================================
@@ -34,7 +31,7 @@ sys.modules.pop("srcB", None)
 # =============================================================================================================
 # Starts from the completed MFIV TSM output file.
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by_year/outputs_by_year_06.pkl","rb") as f:
+with open("../data/IS/outputs_by_year/outputs_by_year_06.pkl","rb") as f:
     outputs_by_year = pickle.load(f)
 
 
@@ -81,7 +78,7 @@ for y in YEARS:
 # =============================================================================================================
 
 with open(
-    "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/x_by_year_fut/x_by_year.pkl",
+    "../data/IS/x_by_year_fut/x_by_year.pkl",
     "rb"
 ) as f:
     X_by_year = pd.read_pickle(f)
@@ -130,7 +127,7 @@ for y in YEARS:
 # =============================================================================================================
 
 with open(
-    "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/ready_data/d_btc_by_year_all.pkl",
+    "../data/IS/ready_data/d_btc_by_year_all.pkl",
     "rb"
 ) as f:
     d_btc_by_year = pickle.load(f)
@@ -155,7 +152,7 @@ for y in YEARS:
 # ======================================= LOAD ITR PARAMETERS =================================================
 # =============================================================================================================
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/hyperparameters/itr_best_params.pkl","rb") as f:
+with open("../data/IS/hyperparameters/itr_best_params.pkl","rb") as f:
     best_itr_params = pickle.load(f)
 
 SEED = 42
@@ -219,12 +216,12 @@ for y in YEARS:
 # =============================================================================================================
 
 os.makedirs(
-    "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/ITR",
+    "../data/IS/ITR",
     exist_ok=True
 )
 
 with open(
-    "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/ITR/itr_bundle_by_year.pkl",
+    "../data/IS/ITR/itr_bundle_by_year.pkl",
     "wb"
 ) as f:
     pickle.dump(itr_bundle_by_year, f)
@@ -238,7 +235,7 @@ print("ITR bundles saved:", list(itr_bundle_by_year.keys()))
 # Save before the runtime trader adapter so the real TCN columns remain untouched in the cumulative file.
 
 with open(
-    "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by_year/outputs_by_year_07.pkl",
+    "../data/IS/outputs_by_year/outputs_by_year_07.pkl",
     "wb"
 ) as f:
     pickle.dump(outputs_by_year, f)
@@ -249,7 +246,7 @@ with open(
 # =============================================================================================================
 
 # with open(
-#     "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by_year/outputs_by_year_07.pkl",
+#     "../data/IS/outputs_by_year/outputs_by_year_07.pkl",
 #     "rb"
 # ) as f:
 #     outputs_by_year = pickle.load(f)
@@ -331,8 +328,8 @@ else:
 # ======================================= TESTING_MAIN_WITH_CACHE =============================================
 # =============================================================================================================
 
-sys.modules.pop("srcB.trader_testing_tcn_v1", None)
-from srcB.trader_testing_tcn_v1 import testing_execute_trading_strategy
+sys.modules.pop("srcB.trader_testing_tcn_v2", None)
+from srcB.trader_testing_tcn_v2 import testing_execute_trading_strategy
 
 MODEL = "itr"
 RUN_BY = "year"
@@ -366,13 +363,6 @@ for YEAR in YEARS:
             trader_cache=trader_cache,
             run_by=RUN_BY,
             quantity=10,
-            expiry_days=30,
-            hold_days=7,
-            lookback_hours=168,
-            mean_hours=12,
-            ql=0.10,
-            qh=0.90,
-            z=1.645,
             forward_hours=FORWARD_HOURS
         )
 
@@ -419,12 +409,12 @@ print("cache:", "tcn_action" in trader_cache[2019].columns)
 # =============================================================================================================
 
 os.makedirs(
-    "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/data_strategy_results",
+    "../data/data_strategy_results",
     exist_ok=True
 )
 
 with open(
-    "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/data_strategy_results/strategy_results_itr.pkl",
+    "../data/data_strategy_results/strategy_results_itr.pkl",
     "wb"
 ) as f:
     pickle.dump(strategy_results, f)
@@ -730,12 +720,13 @@ for threshold in THRESHOLDS:
 
         returns = equity.pct_change().dropna()
         sharpe = returns.mean() / returns.std() * np.sqrt(24 * 365)
-
+        final_equity = equity.iloc[-1]
         rows.append({
             "threshold": threshold,
             "year": y,
-            "trades": len(greek_tests),
-            "sharpe": sharpe
+            "trades": sum(t["action"] in ("buy_to_open", "sell_to_open") for t in market.transactions) // 2,
+            "sharpe": sharpe,
+            "final_equity" : final_equity
         })
 
 threshold_trader_check = pd.DataFrame(rows)
@@ -747,5 +738,32 @@ print(threshold_trader_check.to_string(index=False))
 # =============================================================================================================
 # Select the final itr_score_threshold only after inspecting the sequential trader table above.
 # Prefer a threshold that improves performance robustly across calibration years while retaining a credible trade count.
-# FINAL SELECTION: ITR_SCORE_THRESHOLD = 0.0000
+# FINAL SELECTION: ITR_SCORE_THRESHOLD = 0.000050
 
+
+with open("../data/IS/hyperparameters/itr_study.pkl", "rb") as f:
+    itr_study = pickle.load(f)
+
+df = itr_study.trials_dataframe()
+
+df = df[df["state"] == "COMPLETE"].sort_values("value")
+
+print("COMPLETE TRIALS:", len(df))
+
+print(df[[
+    "number",
+    "value",
+    "params_d_model",
+    "params_n_heads",
+    "params_e_layers",
+    "params_d_ff_ratio",
+    "params_dropout",
+    "params_learning_rate",
+    "params_weight_decay",
+    "params_batch_size"
+]].head(10).to_string(index=False))
+
+
+import optuna 
+fig = optuna.visualization.plot_slice(itr_study)
+fig

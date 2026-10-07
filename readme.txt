@@ -1,6 +1,7 @@
 outputs_by_year_04.pkl
     contains base data + freshly estimated non-MFIV TCN columns
 
+---------------- ABOVE RUNNING - BELOW TO RUN ---------------------------
 GRU analysis:
     load _04
     estimate GRU
@@ -23,5 +24,4 @@ DL analysis:
     load _07
     append native dl_* columns
     save _08
----------------- ABOVE RUNNING - BELOW TO RUN ---------------------------
 ---------------- ABOVE EDITING - BELOW TO EDIT ---------------------------

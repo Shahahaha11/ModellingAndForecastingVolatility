@@ -23,10 +23,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
 
-
-sys.path.insert(0, "/Users/shah/CODE_BOOK_4/THESIS_WORKING/THESIS_2")
-sys.path.insert(0, "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/MFIV_calibration")
-os.chdir("/Users/shah/CODE_BOOK_4/THESIS_WORKING/THESIS_2")
+os.chdir("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/MFIV_calibration")
 sys.modules.pop("srcB", None)
 
 
@@ -35,7 +32,7 @@ sys.modules.pop("srcB", None)
 # =============================================================================================================
 # Starts from the completed MFIV TCN output file.
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by_year/outputs_by_year_04.pkl", "rb") as f:
+with open("../data/IS/outputs_by_year/outputs_by_year_04.pkl", "rb") as f:
     outputs_by_year = pickle.load(f)
 
 # =============================================================================================================
@@ -81,7 +78,7 @@ for y in YEARS:
 # =============================================================================================================
 
 with open(
-    "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/x_by_year_fut/x_by_year.pkl",
+    "../data/IS/x_by_year_fut/x_by_year.pkl",
     "rb"
 ) as f:
     X_by_year = pd.read_pickle(f)
@@ -130,7 +127,7 @@ for y in YEARS:
 # =============================================================================================================
 
 with open(
-    "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/ready_data/d_btc_by_year_all.pkl",
+    "../data/IS/ready_data/d_btc_by_year_all.pkl",
     "rb"
 ) as f:
     d_btc_by_year = pickle.load(f)
@@ -156,7 +153,7 @@ for y in YEARS:
 # =============================================================================================================
 
 with open(
-    "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/hyperparameters/gru_best_params.pkl","rb") as f:
+    "../data/IS/hyperparameters/gru_best_params.pkl","rb") as f:
     best_gru_params = pickle.load(f)
 
 SEED = 11
@@ -211,8 +208,8 @@ for y in YEARS:
         hidden_size=best_gru_params["hidden_size"],
         num_layers=best_gru_params["num_layers"],
         dropout=best_gru_params["dropout"],
-        # epochs=best_gru_params["epochs_by_year"][y],
-        epochs= 40,
+        epochs=best_gru_params["epochs_by_year"][y],
+        # epochs= 40,
         batch_size=best_gru_params["batch_size"],
         learning_rate=best_gru_params["learning_rate"],
         weight_decay=best_gru_params["weight_decay"],
@@ -233,12 +230,12 @@ for y in YEARS:
 # ======================================= SAVE GRU BUNDLES ====================================================
 # =============================================================================================================
 
-os.makedirs("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/GRU",exist_ok=True)
+os.makedirs("../data/IS/GRU",exist_ok=True)
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/GRU/gru_bundle_by_year.pkl","wb") as f:
+with open("../data/IS/GRU/gru_bundle_by_year.pkl","wb") as f:
     pickle.dump(gru_bundle_by_year, f)
 
-print("GRU bundles saved:", list(gru_bundle_by_year.keys()))
+print("GRU bundles saved:", list(gru_bundle_by_year .keys()))
 
 
 # =============================================================================================================
@@ -246,7 +243,7 @@ print("GRU bundles saved:", list(gru_bundle_by_year.keys()))
 # =============================================================================================================
 # Save before the runtime trader adapter so the real TCN columns remain untouched in the cumulative file.
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by_year/outputs_by_year_05.pkl","wb") as f:
+with open("../data/IS/outputs_by_year/outputs_by_year_05.pkl","wb") as f:
     pickle.dump(outputs_by_year, f)
 
 
@@ -348,12 +345,13 @@ score_cols = [
 x = gru_output_by_year[2019][score_cols]
 print(x.describe())
 print(x.max(axis=1).describe())
+
 # =============================================================================================================
 # ======================================= TESTING_MAIN_WITH_CACHE =============================================
 # =============================================================================================================
 
-sys.modules.pop("srcB.trader_testing_tcn_v1", None)
-from srcB.trader_testing_tcn_v1 import testing_execute_trading_strategy
+sys.modules.pop("srcB.trader_testing_tcn_v2", None)
+from srcB.trader_testing_tcn_v2 import testing_execute_trading_strategy
 
 MODEL = "gru"
 RUN_BY = "year"
@@ -387,13 +385,6 @@ for YEAR in YEARS:
             trader_cache=trader_cache,
             run_by=RUN_BY,
             quantity=10,
-            expiry_days=30,
-            hold_days=7,
-            lookback_hours=168,
-            mean_hours=12,
-            ql=0.10,
-            qh=0.90,
-            z=1.645,
             forward_hours = FORWARD_HOURS
         )
 
@@ -439,12 +430,12 @@ print("cache:", "tcn_action" in trader_cache[2019].columns)
 # =============================================================================================================
 
 os.makedirs(
-    "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/data_strategy_results",
+    "../data/data_strategy_results",
     exist_ok=True
 )
 
 with open(
-    "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/data_strategy_results/strategy_results_gru.pkl",
+    "../data/data_strategy_results/strategy_results_gru.pkl",
     "wb"
 ) as f:
     pickle.dump(strategy_results, f)
@@ -656,6 +647,9 @@ print(score_check[[
 # ======================================= GRU SCORE THRESHOLD CALIBRATION ====================================
 # =============================================================================================================
 # Question: if only signals with gru_best_score >= threshold are retained, does fitted target performance improve?
+# With using bins you are just segregating the prediction by quantile and then analysing at that segmeneted level
+# the bin test asks whether the GRU is better at ranking opportunities when it assigns higher predicted PnL.
+# "when I predict a bigger opportunity, the realized opportunity tends to be bigger too."
 
 tests = {}
 
@@ -703,20 +697,20 @@ for q in [0, .20, .40, .50, .60, .70, .80, .85, .90]:
 threshold_check = pd.DataFrame(rows)
 print(threshold_check.to_string(index=False))
 
-
 # 5===== Does the threshold improvement survive the actual sequential trader? =====
 # ================================ GRU_SCORE_THRESHOLD_TRADER_CALIBRATION =====================================
 # =============================================================================================================
 
-sys.modules.pop("srcB.trader_testing_tcn_v1", None)
-from srcB.trader_testing_tcn_v1 import testing_execute_trading_strategy
+sys.modules.pop("srcB.trader_testing_tcn_v2", None)
+from srcB.trader_testing_tcn_v2 import testing_execute_trading_strategy
 
 THRESHOLDS = [
     0.0,
-    float(scores_all.quantile(.70)),
+    float(scores_all.quantile(.76)),
+    float(scores_all.quantile(.78)),
     float(scores_all.quantile(.80)),
-    float(scores_all.quantile(.85)),
-    float(scores_all.quantile(.90))
+    float(scores_all.quantile(.82)),
+    float(scores_all.quantile(.84))
 ]
 rows = []
 
@@ -750,21 +744,114 @@ for threshold in THRESHOLDS:
 
         returns = equity.pct_change().dropna()
         sharpe = returns.mean() / returns.std() * np.sqrt(24 * 365)
-
+        final_equity = equity.iloc[-1]
         rows.append({
             "threshold": threshold,
             "year": y,
-            "trades": len(greek_tests),
-            "sharpe": sharpe
+            "trades": sum(t["action"] in ("buy_to_open", "sell_to_open") for t in market.transactions) // 2,
+            "sharpe": sharpe,
+            "final_equity" : final_equity
         })
 
 threshold_trader_check = pd.DataFrame(rows)
-
+# print(threshold_trader_check.to_string(index=False, float_format=repr))
 print(threshold_trader_check.to_string(index=False))
 
 
 # =============================================================================================================
+# TEMP 
+# =============================================================================================================
+len(greek_tests)
+print([f"{x:.12f}" for x in THRESHOLDS])
+
+for y in YEARS:
+    print(y, tests[y]["gru_best_score"].describe(percentiles=[.7,.8,.85,.9]))
+
+pred_cols = [
+    "gru_long_straddle",
+    "gru_short_straddle",
+    "gru_long_strangle",
+    "gru_short_strangle"
+]
+for y in YEARS:
+    print("\nYEAR:", y)
+    print("\nACTIONS")
+    print(gru_output_by_year[y]["gru_action"].value_counts(dropna=False))
+    print("\nPREDICTIONS")
+    print(gru_output_by_year[y][pred_cols].describe().loc[
+        ["mean", "std", "min", "max"]
+    ])
+    print("\nTARGETS")
+    print(gru_targets_by_year[y][target_cols].describe().loc[
+        ["mean", "std", "min", "max"]
+    ])
+    print("\nY SCALER")
+    print("y_mean:", gru_bundle_by_year[y]["y_mean"])
+    print("y_std :", gru_bundle_by_year[y]["y_std"])
+    print("\nBEST EPOCH:", gru_bundle_by_year[y].get("best_epoch"))
+
+# =============================================================================================================
+# ======================================= SAVE DIAGNOSTIC DATA ================================================
+# =============================================================================================================
+# TO BE RUN 
+DIAGNOSTICS_DIR = "../data/IS/diagnostics"
+os.makedirs(DIAGNOSTICS_DIR, exist_ok=True)
+
+with open(f"{DIAGNOSTICS_DIR}/gru_targets_by_year.pkl", "wb") as f:
+    pickle.dump(gru_targets_by_year, f)
+
+with open(f"{DIAGNOSTICS_DIR}/gru_output_by_year.pkl", "wb") as f:
+    pickle.dump(gru_output_by_year, f)
+    
+# =============================================================================================================
 # ======================================= NOTE =================================================================
 # =============================================================================================================
-# FINAL SELECTION: GRU_SCORE_THRESHOLD = 0.000631
+# FINAL SELECTION: GRU_SCORE_THRESHOLD = 0.000224
 
+### CHECK best params
+with open("../data/IS/hyperparameters/gru_study.pkl","rb") as f:
+    study = pickle.load(f)
+
+for name, distribution in study.best_trial.distributions.items():
+    print(name, distribution)
+
+import optuna
+fig = optuna.visualization.plot_slice(
+    study
+)
+fig.show()
+
+fig_1 = optuna.visualization.plot_optimization_history(study)
+fig_1.show()
+
+print(study.best_value)
+print(study.best_params)
+
+# OTHER OLD
+df = study.trials_dataframe()
+
+param_cols = [
+    c for c in df.columns
+    if c.startswith("params_")
+]
+df = df[df["state"] == "COMPLETE"].sort_values("value", ascending = True)
+print("\nCOMPLETE TRIALS:", len(df))
+
+
+print("\nTOP 10 COMPLETE TRIALS")
+print(
+    df[["number", "value"] + param_cols].head(10).to_string(index=False)
+)
+
+print("\nTOP 10 PARAMETER FREQUENCIES")
+for col in param_cols:
+    print("\n", col)
+    print(df.head(10)[col].value_counts(dropna=False))
+
+print("\nBEST VALUE")
+print(study.best_value)
+
+print("\nBEST PARAMETERS")
+print(study.best_params)
+
+d_btc_raw_by_year[2021]

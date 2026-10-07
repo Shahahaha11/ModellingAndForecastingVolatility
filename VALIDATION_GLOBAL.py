@@ -27,12 +27,8 @@ warnings.filterwarnings("ignore", category=ConvergenceWarning)
 
 
 import os, sys
-sys.path.insert(0, "/Users/shah/CODE_BOOK_4/THESIS_WORKING/THESIS_2")
-sys.path.insert(0, "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/MFIV_calibration")
-os.chdir("/Users/shah/CODE_BOOK_4/THESIS_WORKING/THESIS_2")
-
+os.chdir("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/MFIV_calibration")
 sys.modules.pop("srcB", None)
-
 
 # =============================================================================================================
 # ======================================= LOAD BASE OUTPUTS ===================================================
@@ -40,10 +36,10 @@ sys.modules.pop("srcB", None)
 
 import pickle 
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by_year/outputs_by_year_08.pkl", "rb") as f:
+with open("../data/IS/outputs_by_year/outputs_by_year_08.pkl", "rb") as f:
     outputs_by_year = pickle.load(f)
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/OOS/outputs_by_year/outputs_by_year_01.pkl", "rb") as f:
+with open("../data/OOS/outputs_by_year/outputs_by_year_01.pkl", "rb") as f:
     outputs_by_year_OOS = pickle.load(f)
 
 
@@ -83,10 +79,10 @@ VALIDATION_YEAR = 2022
 YEARS = CALIBRATION_YEARS + [VALIDATION_YEAR]
 
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/x_by_year_fut/x_by_year.pkl", "rb") as f:
+with open("../data/IS/x_by_year_fut/x_by_year.pkl", "rb") as f:
     X_by_year = pd.read_pickle(f)
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/OOS/x_by_year_fut/x_by_year.pkl", "rb") as f:
+with open("../data/OOS/x_by_year_fut/x_by_year.pkl", "rb") as f:
     X_by_year_OOS = pd.read_pickle(f)
 
 
@@ -127,10 +123,10 @@ for y in YEARS:
 # ======================================= BORROW RFR COLUMN ===================================================
 # =============================================================================================================
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/ready_data/d_btc_by_year_all.pkl", "rb") as f:
+with open("../data/IS/ready_data/d_btc_by_year_all.pkl", "rb") as f:
     d_btc_by_year = pickle.load(f)
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/OOS/ready_data/d_btc_by_year_all.pkl", "rb") as f:
+with open("../data/OOS/ready_data/d_btc_by_year_all.pkl", "rb") as f:
     d_btc_by_year_OOS = pickle.load(f)
 
 
@@ -152,11 +148,18 @@ for y in YEARS:
 # ======================================= FROZEN MODEL SPECIFICATIONS =========================================
 # =============================================================================================================
 
-TCN_SCORE_THRESHOLD = 0.000693
-GRU_SCORE_THRESHOLD = 0.000631
-TSM_SCORE_THRESHOLD = 0.000775
-ITR_SCORE_THRESHOLD = 0.000
-DL_SCORE_THRESHOLD  = 0.000694
+# TCN_SCORE_THRESHOLD = 0.0
+# GRU_SCORE_THRESHOLD = 0.000224
+# TSM_SCORE_THRESHOLD = 0.000611
+# ITR_SCORE_THRESHOLD = 0.000050
+# DL_SCORE_THRESHOLD  = 0.000575
+
+# Full capacity
+TCN_SCORE_THRESHOLD = 0.000000
+GRU_SCORE_THRESHOLD = 0.000000
+TSM_SCORE_THRESHOLD = 0.000000
+ITR_SCORE_THRESHOLD = 0.000000
+DL_SCORE_THRESHOLD  = 0.000000
 
 FORWARD_HOURS = 24
 
@@ -166,19 +169,19 @@ FORWARD_HOURS = 24
 
 MODEL_YEAR = 2021
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/TCN/tcn_bundle_by_year.pkl", "rb") as f:
+with open("../data/IS/TCN/tcn_bundle_by_year.pkl", "rb") as f:
     tcn_bundle_by_year = pickle.load(f)
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/GRU/gru_bundle_by_year.pkl", "rb") as f:
+with open("../data/IS/GRU/gru_bundle_by_year.pkl", "rb") as f:
     gru_bundle_by_year = pickle.load(f)
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/TSM/tsm_bundle_by_year.pkl", "rb") as f:
+with open("../data/IS/TSM/tsm_bundle_by_year.pkl", "rb") as f:
     tsm_bundle_by_year = pickle.load(f)
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/DL/dl_bundle_by_year.pkl", "rb") as f:
+with open("../data/IS/DL/dl_bundle_by_year.pkl", "rb") as f:
     dl_bundle_by_year = pickle.load(f)
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/ITR/itr_bundle_by_year.pkl", "rb") as f:
+with open("../data/IS/ITR/itr_bundle_by_year.pkl", "rb") as f:
     itr_bundle_by_year = pickle.load(f)
 
 
@@ -356,8 +359,8 @@ for q in QUARTERS:
 
 from srcB.market import Market
 
-sys.modules.pop("srcB.trader_testing_tcn_v1", None)
-from srcB.trader_testing_tcn_v1 import testing_execute_trading_strategy
+sys.modules.pop("srcB.trader_testing_tcn_v2", None)
+from srcB.trader_testing_tcn_v2 import testing_execute_trading_strategy
 
 
 MODEL_CONFIGS = {
@@ -472,7 +475,9 @@ for MODEL in MODELS:
     rows.append({
         "year": VALIDATION_YEAR,
         "model": MODEL,
-        "trades": len(strategy_results[history_key]["greek_tests"]),
+        "trades": sum(t["action"] in ("buy_to_open", "sell_to_open")
+                      for t in strategy_results[history_key]["transactions"]
+                      ) // 2,
         "sharpe": sharpe,
         "final_equity": equity.iloc[-1]
     })
@@ -485,9 +490,9 @@ print(validation_sharpe)
 # ======================================= SAVE VALIDATION STRATEGY RESULTS ====================================
 # =============================================================================================================
 
-os.makedirs("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/VAL", exist_ok=True)
+os.makedirs("../data/VAL", exist_ok=True)
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/VAL/strategy_results_2022.pkl","wb") as f:
+with open("../data/VAL/strategy_results_2022.pkl","wb") as f:
     pickle.dump(strategy_results, f)
 
 print(strategy_results.keys())

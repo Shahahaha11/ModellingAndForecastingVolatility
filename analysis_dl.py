@@ -22,10 +22,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
 
-
-sys.path.insert(0, "/Users/shah/CODE_BOOK_4/THESIS_WORKING/THESIS_2")
-sys.path.insert(0, "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/MFIV_calibration")
-os.chdir("/Users/shah/CODE_BOOK_4/THESIS_WORKING/THESIS_2")
+os.chdir("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/MFIV_calibration")
 sys.modules.pop("srcB", None)
 
 
@@ -34,7 +31,7 @@ sys.modules.pop("srcB", None)
 # =============================================================================================================
 # Starts from the completed MFIV ITR output file.
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by_year/outputs_by_year_07.pkl","rb") as f:
+with open("../data/IS/outputs_by_year/outputs_by_year_07.pkl","rb") as f:
     outputs_by_year = pickle.load(f)
 
 
@@ -81,7 +78,7 @@ for y in YEARS:
 # =============================================================================================================
 
 with open(
-    "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/x_by_year_fut/x_by_year.pkl",
+    "../data/IS/x_by_year_fut/x_by_year.pkl",
     "rb"
 ) as f:
     X_by_year = pd.read_pickle(f)
@@ -129,7 +126,7 @@ for y in YEARS:
 # ======================================= BORROW RFR COLUMN ===================================================
 # =============================================================================================================
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/ready_data/d_btc_by_year_all.pkl","rb") as f:
+with open("../data/IS/ready_data/d_btc_by_year_all.pkl","rb") as f:
     d_btc_by_year = pickle.load(f)
 
 for y in YEARS:
@@ -152,7 +149,7 @@ for y in YEARS:
 # ======================================= LOAD DL PARAMETERS =================================================
 # =============================================================================================================
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/hyperparameters/dl_best_params.pkl","rb") as f:
+with open("../data/IS/hyperparameters/dl_best_params.pkl","rb") as f:
     best_dl_params = pickle.load(f)
 
 SEED = 42
@@ -213,12 +210,12 @@ for y in YEARS:
 # =============================================================================================================
 
 os.makedirs(
-    "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/DL",
+    "../data/IS/DL",
     exist_ok=True
 )
 
 with open(
-    "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/DL/dl_bundle_by_year.pkl",
+    "../data/IS/DL/dl_bundle_by_year.pkl",
     "wb"
 ) as f:
     pickle.dump(dl_bundle_by_year, f)
@@ -232,7 +229,7 @@ print("DL bundles saved:", list(dl_bundle_by_year.keys()))
 # Save before the runtime trader adapter so the real TCN columns remain untouched in the cumulative file.
 
 with open(
-    "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by_year/outputs_by_year_08.pkl",
+    "../data/IS/outputs_by_year/outputs_by_year_08.pkl",
     "wb"
 ) as f:
     pickle.dump(outputs_by_year, f)
@@ -243,7 +240,7 @@ with open(
 # =============================================================================================================
 
 # with open(
-#     "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/outputs_by_year/outputs_by_year_08.pkl",
+#     "../data/IS/outputs_by_year/outputs_by_year_08.pkl",
 #     "rb"
 # ) as f:
 #     outputs_by_year = pickle.load(f)
@@ -323,8 +320,8 @@ else:
 # ======================================= TESTING_MAIN_WITH_CACHE =============================================
 # =============================================================================================================
 
-sys.modules.pop("srcB.trader_testing_tcn_v1", None)
-from srcB.trader_testing_tcn_v1 import testing_execute_trading_strategy
+sys.modules.pop("srcB.trader_testing_tcn_v2", None)
+from srcB.trader_testing_tcn_v2 import testing_execute_trading_strategy
 
 MODEL = "dl"
 RUN_BY = "year"
@@ -358,13 +355,6 @@ for YEAR in YEARS:
             trader_cache=trader_cache,
             run_by=RUN_BY,
             quantity=10,
-            expiry_days=30,
-            hold_days=7,
-            lookback_hours=168,
-            mean_hours=12,
-            ql=0.10,
-            qh=0.90,
-            z=1.645,
             forward_hours=FORWARD_HOURS,
         )
 
@@ -409,12 +399,12 @@ print("cache:", "tcn_action" in trader_cache[2019].columns)
 # =============================================================================================================
 
 os.makedirs(
-    "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/data_strategy_results",
+    "../data/data_strategy_results",
     exist_ok=True
 )
 
 with open(
-    "/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/data_strategy_results/strategy_results_dl.pkl",
+    "../data/data_strategy_results/strategy_results_dl.pkl",
     "wb"
 ) as f:
     pickle.dump(strategy_results, f)
@@ -719,12 +709,13 @@ for threshold in THRESHOLDS:
 
         returns = equity.pct_change().dropna()
         sharpe = returns.mean() / returns.std() * np.sqrt(24 * 365)
-
+        final_equity = equity.iloc[-1]
         rows.append({
             "threshold": threshold,
             "year": y,
-            "trades": len(greek_tests),
-            "sharpe": sharpe
+            "trades": sum(t["action"] in ("buy_to_open", "sell_to_open") for t in market.transactions) // 2,
+            "sharpe": sharpe,
+            "final_equity" : final_equity
         })
 
 threshold_trader_check = pd.DataFrame(rows)
@@ -736,13 +727,25 @@ print(threshold_trader_check.to_string(index=False))
 # =============================================================================================================
 # Select the final dl_score_threshold only after inspecting the sequential trader table above.
 # Prefer a threshold that improves performance robustly across calibration years while retaining a credible trade count.
-# FINAL SELECTION: DL_SCORE_THRESHOLD = 0.000694
+# FINAL SELECTION: DL_SCORE_THRESHOLD = 0.000575
 
 
+with open("../data/IS/hyperparameters/itr_study.pkl", "rb") as f:
+    itr_study = pickle.load(f)
+
+df = itr_study.trials_dataframe()
+
+df = df[df["state"] == "COMPLETE"]
+
+print("ITR")
+
+print("BEST VALUE:", itr_study.best_trial.value)
+print("BEST PARAMS:", itr_study.best_trial.params)
+print("PARAMETER SPACE:")
+print(itr_study.best_trial.distributions)
 
 
-
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/hyperparameters/tcn_study.pkl", "rb") as f:
+with open("../data/IS/hyperparameters/tcn_study.pkl", "rb") as f:
     tcn_study = pickle.load(f)
 df = tcn_study.trials_dataframe()
 df = df[df["state"] == "COMPLETE"].sort_values("number")
@@ -750,7 +753,7 @@ df["best_so_far"] = df["value"].cummin()
 print("TCN")
 print(df[["number", "value", "best_so_far"]].to_string(index=False))
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/hyperparameters/gru_study.pkl", "rb") as f:
+with open("../data/IS/hyperparameters/gru_study.pkl", "rb") as f:
     gru_study = pickle.load(f)
 df = gru_study.trials_dataframe()
 df = df[df["state"] == "COMPLETE"].sort_values("number")
@@ -758,7 +761,7 @@ df["best_so_far"] = df["value"].cummin()
 print("GRU")
 print(df[["number", "value", "best_so_far"]].to_string(index=False))
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/hyperparameters/tsm_study.pkl", "rb") as f:
+with open("../data/IS/hyperparameters/tsm_study.pkl", "rb") as f:
     tsm_study = pickle.load(f)
 df = tsm_study.trials_dataframe()
 df = df[df["state"] == "COMPLETE"].sort_values("number")
@@ -766,7 +769,7 @@ df["best_so_far"] = df["value"].cummin()
 print("TSM")
 print(df[["number", "value", "best_so_far"]].to_string(index=False))
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/hyperparameters/itr_study.pkl", "rb") as f:
+with open("../data/IS/hyperparameters/itr_study.pkl", "rb") as f:
     itr_study = pickle.load(f)
 df = itr_study.trials_dataframe()
 df = df[df["state"] == "COMPLETE"].sort_values("number")
@@ -774,7 +777,7 @@ df["best_so_far"] = df["value"].cummin()
 print("ITR")
 print(df[["number", "value", "best_so_far"]].to_string(index=False))
 
-with open("/Users/shah/CODE_BOOK_4/code_document/REPOSITORIES/data/IS/hyperparameters/dl_study.pkl", "rb") as f:
+with open("../data/IS/hyperparameters/dl_study.pkl", "rb") as f:
     dl_study = pickle.load(f)
 df = dl_study.trials_dataframe()
 df = df[df["state"] == "COMPLETE"].sort_values("number")
