@@ -38,6 +38,13 @@ class dataprep:
         d_btc["r"] = np.log(d_btc["close"]).diff()
         d_btc = d_btc.rename(columns={"close": "Close"})
 
+        q = 0.0
+        HOURS = [5, 20, 30, 40]
+
+        for H in HOURS:
+            T = H / (24.0 * 365.0)  # years
+            d_btc[f"F{H}"] = d_btc["Close"] * np.exp((d_btc["rfr"] - q) * T)
+
         self.d_btc = d_btc
         return d_btc
 
